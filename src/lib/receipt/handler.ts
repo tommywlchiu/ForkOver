@@ -142,27 +142,22 @@ async function* run(
   deps: ParseReceiptDeps,
 ): AsyncGenerator<WireEvent> {
   // The draft bill and photo upload run in parallel with the model call.
-  const stored = deps
-    .createDraftBill(userId)
-    .then(async (billId) => {
-      await deps.storeReceiptImage(billId, image, mediaType);
-      return billId;
-    });
+  let draftId: string | null = null;
+  const stored = deps.createDraftBill(userId).then(async (billId) => {
+    draftId = billId;
+    await deps.storeReceiptImage(billId, image, mediaType);
+    return billId;
+  });
   // Awaited below; this keeps a failure during the model call from surfacing as unhandled.
   stored.catch(() => undefined);
 
-  const discard = async () => {
-    const billId = await stored.catch(() => null);
-    if (billId) await deps.discardDraftBill(billId).catch(() => undefined);
-  };
-
+  let completed = false;
   let receipt: ParsedReceipt | null = null;
   try {
     for await (const event of parseReceiptImage(image, mediaType, anthropic)) {
       if (event.type === 'item') {
         yield event;
       } else if (event.type === 'error') {
-        await discard();
         yield event;
         return;
       } else {
@@ -173,11 +168,17 @@ async function* run(
 
     const billId = await stored;
     await deps.recordSuccessfulScan(userId);
+    completed = true;
     yield { type: 'done', billId, receipt };
   } catch (error) {
     // Storage or database trouble, not the model. Never include image data.
     console.error('parse-receipt failed:', error instanceof Error ? error.message : 'unknown error');
-    await discard();
     yield { type: 'error', code: 'UPSTREAM_ERROR' };
+  } finally {
+    // Runs on every exit, including the app disconnecting mid-scan.
+    if (!completed) {
+      await stored.catch(() => undefined);
+      if (draftId) await deps.discardDraftBill(draftId).catch(() => undefined);
+    }
   }
 }

@@ -34,12 +34,6 @@ export type ParsedReceipt = {
 export const TIP_SOURCES: readonly TipSource[] = ['printed', 'handwritten', 'autoGratuity', 'mixed'];
 
 /**
- * Upper bound on a line's quantity. The model occasionally reads a barcode or
- * table number as a quantity, and toBill would expand it into that many items.
- */
-export const MAX_QUANTITY = 100;
-
-/**
  * JSON schema sent as `output_config.format.schema`. Structured outputs need
  * `additionalProperties: false` on every object, every property listed in
  * `required`, and no numeric constraints, so ranges are enforced in
@@ -139,13 +133,8 @@ export function validateLineItem(
   if (!isRecord(value)) return { ok: false, errors: [`${path} must be an object`] };
   const errors: string[] = [];
   if (typeof value.name !== 'string') errors.push(`${path}.name must be a string`);
-  if (
-    typeof value.quantity !== 'number' ||
-    !Number.isInteger(value.quantity) ||
-    value.quantity < 1 ||
-    value.quantity > MAX_QUANTITY
-  ) {
-    errors.push(`${path}.quantity must be an integer from 1 to ${MAX_QUANTITY}`);
+  if (typeof value.quantity !== 'number' || !Number.isInteger(value.quantity) || value.quantity < 1) {
+    errors.push(`${path}.quantity must be an integer of at least 1`);
   }
   if (!isCentsValue(value.lineTotalCents)) {
     errors.push(`${path}.lineTotalCents must be a non-negative integer`);

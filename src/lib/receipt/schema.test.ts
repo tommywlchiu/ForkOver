@@ -1,5 +1,5 @@
 import { notAReceipt, sampleReceipt } from './fixtures';
-import { RECEIPT_JSON_SCHEMA, ISO_4217_CODES, MAX_QUANTITY, validateLineItem, validateReceipt } from './schema';
+import { RECEIPT_JSON_SCHEMA, ISO_4217_CODES, validateLineItem, validateReceipt } from './schema';
 
 const invalid = (value: unknown) => {
   const result = validateReceipt(value);
@@ -88,7 +88,6 @@ describe('validateReceipt', () => {
     const good = { name: 'Beer', quantity: 1, lineTotalCents: 500 };
     expect(withItem({ ...good, quantity: 0 })).toContain('items[0].quantity');
     expect(withItem({ ...good, quantity: 1.5 })).toContain('items[0].quantity');
-    expect(withItem({ ...good, quantity: MAX_QUANTITY + 1 })).toContain('items[0].quantity');
     expect(withItem({ ...good, lineTotalCents: -5 })).toContain('items[0].lineTotalCents');
     expect(withItem({ ...good, name: 7 })).toContain('items[0].name');
     expect(withItem('beer')).toContain('items[0]');

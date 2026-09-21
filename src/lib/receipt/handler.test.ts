@@ -216,6 +216,7 @@ describe('handleParseReceipt: failures during the parse', () => {
     const events = await readEvents(await handleParseReceipt(photo(), deps));
     expect(events.at(-1)).toEqual({ type: 'error', code: 'UPSTREAM_ERROR' });
     expect(events.some((e) => e.type === 'done')).toBe(false);
+    expect(calls).toContain('discardDraftBill:bill-1');
     expect(calls.some((c) => c.startsWith('recordSuccessfulScan'))).toBe(false);
     errorSpy.mockRestore();
   });
@@ -259,5 +260,25 @@ describe('handleParseReceipt: client disconnects', () => {
     await reader.read();
     await reader.cancel();
     expect(signal?.aborted).toBe(true);
+  });
+
+  it('discards the draft and records no quota use when the app disconnects mid-scan', async () => {
+    const { deps, calls } = setup();
+    const response = await handleParseReceipt(photo(), deps);
+    const reader = response.body!.getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(calls).toContain('discardDraftBill:bill-1');
+    expect(calls.some((c) => c.startsWith('recordSuccessfulScan'))).toBe(false);
+  });
+
+  it('keeps the draft when the app disconnects after the scan completed', async () => {
+    const { deps, calls } = setup();
+    const response = await handleParseReceipt(photo(), deps);
+    const reader = response.body!.getReader();
+    for (let i = 0; i < 3; i++) await reader.read();
+    await reader.cancel();
+    expect(calls).toContain('recordSuccessfulScan:user-1');
+    expect(calls.some((c) => c.startsWith('discardDraftBill'))).toBe(false);
   });
 });
