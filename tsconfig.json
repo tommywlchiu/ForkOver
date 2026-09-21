@@ -2,6 +2,7 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "allowImportingTsExtensions": true,
     "types": ["jest"],
     "paths": {
       "@/*": [
@@ -20,6 +21,7 @@
   ],
   "exclude": [
     "node_modules",
+    "supabase/functions",
     "firstmate",
     "backpass"
   ]
