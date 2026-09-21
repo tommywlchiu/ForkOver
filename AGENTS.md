@@ -38,7 +38,7 @@ npm run lint      # expo lint
 ## Edge Functions
 
 - `supabase/functions/*/index.ts` is thin Deno wiring. The logic lives in `src/lib` so jest tests it; `tsc` and eslint skip `supabase/functions`.
-- Files that Deno imports (`src/lib/receipt/{schema,partialJson,anthropic,parseReceipt,handler}.ts`) import each other with explicit `.ts` extensions and no dependencies. Keep it that way.
+- Files that Deno imports (`src/lib/receipt/{schema,partialJson,prompt,anthropic,parseReceipt,handler}.ts`) import each other with explicit `.ts` extensions and no dependencies. Keep it that way.
 - `supabase start` and `supabase functions serve` need Docker (WSL integration enabled). The CLI is a dev dependency: `npx supabase ...`.
 - Secrets live in `supabase/functions/.env.local` (git-ignored, template in `.env.example`), never in client code.
 

@@ -4,8 +4,9 @@
  *
  * Secrets (set with `supabase secrets set`, or supabase/functions/.env.local
  * for `supabase functions serve --env-file`): ANTHROPIC_API_KEY, ANTHROPIC_MODEL.
- * Optional: MAX_IMAGE_BYTES (default 5000000), ANTHROPIC_BASE_URL (point at a stub or proxy). SUPABASE_URL and
- * SUPABASE_SERVICE_ROLE_KEY are provided by the platform.
+ * Optional: MAX_IMAGE_BYTES (default 5000000), ANTHROPIC_BASE_URL (point at a
+ * stub or proxy). SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided by
+ * the platform.
  */
 import { createClient } from '@supabase/supabase-js';
 import { handleParseReceipt, type ParseReceiptDeps } from '../../../src/lib/receipt/handler.ts';
