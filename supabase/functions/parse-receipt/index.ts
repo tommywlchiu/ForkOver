@@ -4,7 +4,7 @@
  *
  * Secrets (set with `supabase secrets set`, or supabase/functions/.env.local
  * for `supabase functions serve --env-file`): ANTHROPIC_API_KEY, ANTHROPIC_MODEL.
- * Optional: MAX_IMAGE_BYTES (default 5000000). SUPABASE_URL and
+ * Optional: MAX_IMAGE_BYTES (default 5000000), ANTHROPIC_BASE_URL (point at a stub or proxy). SUPABASE_URL and
  * SUPABASE_SERVICE_ROLE_KEY are provided by the platform.
  */
 import { createClient } from '@supabase/supabase-js';
@@ -32,7 +32,11 @@ const deps: ParseReceiptDeps = {
     if (error || !data.user) return null;
     return { userId: data.user.id, isAnonymous: data.user.is_anonymous ?? false };
   },
-  anthropic: { apiKey: requireEnv('ANTHROPIC_API_KEY'), model: requireEnv('ANTHROPIC_MODEL') },
+  anthropic: {
+    apiKey: requireEnv('ANTHROPIC_API_KEY'),
+    model: requireEnv('ANTHROPIC_MODEL'),
+    baseUrl: Deno.env.get('ANTHROPIC_BASE_URL') || undefined,
+  },
   maxImageBytes: Number(Deno.env.get('MAX_IMAGE_BYTES') ?? DEFAULT_MAX_IMAGE_BYTES),
 };
 
