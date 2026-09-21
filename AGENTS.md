@@ -34,3 +34,17 @@ npm test          # jest-expo, scoped to src/
 npm run typecheck # tsc --noEmit
 npm run lint      # expo lint
 ```
+
+## Edge Functions
+
+- `supabase/functions/*/index.ts` is thin Deno wiring. The logic lives in `src/lib` so jest tests it; `tsc` and eslint skip `supabase/functions`.
+- Files that Deno imports (`src/lib/receipt/{schema,partialJson,prompt,anthropic,parseReceipt,handler}.ts`) import each other with explicit `.ts` extensions and no dependencies. Keep it that way.
+- `supabase start` and `supabase functions serve` need Docker (WSL integration enabled). The CLI is a dev dependency: `npx supabase ...`.
+- Secrets live in `supabase/functions/.env.local` (git-ignored, template in `.env.example`), never in client code.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

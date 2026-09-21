@@ -4,7 +4,7 @@ const expoConfig = require('eslint-config-expo/flat');
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/*', 'firstmate/*', 'backpass/*'],
+    ignores: ['dist/*', 'firstmate/*', 'backpass/*', 'supabase/functions/*'],
   },
   {
     // Contract suites are authored upstream and must never be edited (SPEC section 0),
