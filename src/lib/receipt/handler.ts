@@ -5,7 +5,7 @@
  * comes in through `ParseReceiptDeps`, so this file has no I/O of its own and
  * tests need neither a database nor an API key.
  */
-import type { AnthropicConfig, ImageMediaType } from './anthropic.ts';
+import type { AnthropicConfig, ImageMediaType, Usage } from './anthropic.ts';
 import { parseReceiptImage, type ParseErrorCode } from './parseReceipt.ts';
 import type { ParsedLineItem, ParsedReceipt } from './schema.ts';
 
@@ -29,6 +29,8 @@ export type ParseReceiptDeps = {
   /** Counts one successful scan against the monthly quota. */
   recordSuccessfulScan(userId: string): Promise<void>;
   anthropic: AnthropicConfig;
+  /** Optional. Called with the model's token usage when a scan parses successfully. The eval script uses it. */
+  onScanUsage?(usage: Usage): void;
   /** From the MAX_IMAGE_BYTES env var. */
   maxImageBytes: number;
 };
@@ -162,6 +164,7 @@ async function* run(
         return;
       } else {
         receipt = event.receipt;
+        deps.onScanUsage?.(event.usage);
       }
     }
     if (receipt === null) throw new Error('parse ended without a result');
