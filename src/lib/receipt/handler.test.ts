@@ -68,6 +68,17 @@ describe('handleParseReceipt: success', () => {
     ]);
   });
 
+  it('reports the model token usage through onScanUsage on success only', async () => {
+    const usages: unknown[] = [];
+    const ok = setup({ upstream: { ...goodStream, usage: { inputTokens: 1234, outputTokens: 56 } }, onScanUsage: (u) => usages.push(u) });
+    await (await handleParseReceipt(photo(), ok.deps)).text();
+    expect(usages).toEqual([{ inputTokens: 1234, outputTokens: 56 }]);
+
+    const failed = setup({ upstream: { status: 500 }, onScanUsage: (u) => usages.push(u) });
+    await (await handleParseReceipt(photo(), failed.deps)).text();
+    expect(usages).toHaveLength(1);
+  });
+
   it('delivers items to the client before the model has finished', async () => {
     const { deps } = setup();
     const response = await handleParseReceipt(photo(), deps);
