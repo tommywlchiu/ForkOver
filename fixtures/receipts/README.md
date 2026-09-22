@@ -4,7 +4,25 @@ This folder holds the real receipt photos and the hand-written answers for the m
 (`SPEC.md` section 7.7). The eval reads each photo with each model, compares the result to your
 answer, and prints a comparison table you use to set the accuracy target and pick the model.
 
-**No photos are committed yet.** You provide them.
+**No real photos are committed yet.** You provide them.
+
+## Synthetic set (preliminary only)
+
+The 10 `*-synthetic.jpg`-style fixtures currently in this folder (`sunny-side-diner-long.jpg`
+through `pinewood-family-diner-long.jpg`) are computer-rendered, not photos: monospace text drawn
+onto a plain background, with a few given a rotation, blur, or a simulated fold/crease/shadow so
+the set isn't uniformly pristine. Every one has fake merchant names and items, and its
+`.expected.json` carries a `notes` field saying so. They cover the `kinds` this README requires at
+least once each, but there are 10 of them, short of the 12 SPEC 7.7 asks for.
+
+They exist only so an early, clearly-labeled-synthetic comparison of `claude-haiku-4-5-20251001`
+and `claude-sonnet-5` can run before real photos are available. A rendered receipt has none of the
+noise a phone photo does — no real paper texture, no printer wear, no actual handwriting, no
+lighting or focus variation beyond the simple filters applied here — so its accuracy numbers
+overstate how the models will do on the photos a payer actually takes. **The captain's real receipt
+photos are what decide the model and the accuracy target at the M2 checkpoint (SPEC.md section
+11)**; this synthetic set does not substitute for them. Delete or keep these fixtures once real
+photos land, at the captain's discretion.
 
 ## What to add
 
