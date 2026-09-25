@@ -1,0 +1,66 @@
+{
+  "currency": "JPY",
+  "items": [
+    {
+      "name": "生ビール中",
+      "quantity": 1,
+      "lineTotalCents": 600
+    },
+    {
+      "name": "朝獲れ大ボタン",
+      "quantity": 1,
+      "lineTotalCents": 1780
+    },
+    {
+      "name": "真いか",
+      "quantity": 1,
+      "lineTotalCents": 180
+    },
+    {
+      "name": "大とろ",
+      "quantity": 1,
+      "lineTotalCents": 780
+    },
+    {
+      "name": "軍艦海水うに",
+      "quantity": 1,
+      "lineTotalCents": 780
+    },
+    {
+      "name": "サーモン",
+      "quantity": 1,
+      "lineTotalCents": 250
+    },
+    {
+      "name": "さんま",
+      "quantity": 1,
+      "lineTotalCents": 250
+    },
+    {
+      "name": "いくら",
+      "quantity": 1,
+      "lineTotalCents": 250
+    },
+    {
+      "name": "こはだ",
+      "quantity": 1,
+      "lineTotalCents": 250
+    },
+    {
+      "name": "さば",
+      "quantity": 1,
+      "lineTotalCents": 250
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 0,
+  "fees": [],
+  "printedTipCents": null,
+  "printedSubtotalCents": 5370,
+  "printedTotalCents": 5370,
+  "kinds": [
+    "non-usd",
+    "long"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. A thumb covers the first character of some lines; 朝獲れ大ボタン and 真いか are best readings (check). 'お好みF 1個' prints no price and is left out as a zero-price line (check). Prices are tax-inclusive (内消費税 5% ¥255), so taxCents is 0 (check). The printed 内税品計 ¥5,370 is used as the subtotal. Arithmetic checks: items sum to 5,370 = total."
+}

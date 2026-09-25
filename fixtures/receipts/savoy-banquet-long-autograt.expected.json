@@ -1,0 +1,132 @@
+{
+  "currency": "USD",
+  "items": [
+    {
+      "name": "Nine Stones Btl",
+      "quantity": 1,
+      "lineTotalCents": 3800
+    },
+    {
+      "name": "Duckhrn Napa Cab",
+      "quantity": 3,
+      "lineTotalCents": 21600
+    },
+    {
+      "name": "Sterling Meritge",
+      "quantity": 1,
+      "lineTotalCents": 3400
+    },
+    {
+      "name": "Calamari",
+      "quantity": 1,
+      "lineTotalCents": 1150
+    },
+    {
+      "name": "Lobster Bisque",
+      "quantity": 3,
+      "lineTotalCents": 2550
+    },
+    {
+      "name": "Hendrick's Wash",
+      "quantity": 2,
+      "lineTotalCents": 1750
+    },
+    {
+      "name": "Large Kosar",
+      "quantity": 1,
+      "lineTotalCents": 4600
+    },
+    {
+      "name": "Filet 10 oz.",
+      "quantity": 1,
+      "lineTotalCents": 3500
+    },
+    {
+      "name": "Large Cab Steak",
+      "quantity": 2,
+      "lineTotalCents": 7200
+    },
+    {
+      "name": "NY Strip 18 oz.",
+      "quantity": 1,
+      "lineTotalCents": 3900
+    },
+    {
+      "name": "Ribeye 16 oz.",
+      "quantity": 1,
+      "lineTotalCents": 3700
+    },
+    {
+      "name": "Porterhouse",
+      "quantity": 1,
+      "lineTotalCents": 3900
+    },
+    {
+      "name": "Bone-In Filet",
+      "quantity": 2,
+      "lineTotalCents": 8800
+    },
+    {
+      "name": "Filet 12 oz.",
+      "quantity": 1,
+      "lineTotalCents": 3900
+    },
+    {
+      "name": "1/2 Wedge Salad",
+      "quantity": 1,
+      "lineTotalCents": 650
+    },
+    {
+      "name": "Caesar Salad",
+      "quantity": 2,
+      "lineTotalCents": 1500
+    },
+    {
+      "name": "Coffee",
+      "quantity": 4,
+      "lineTotalCents": 1180
+    },
+    {
+      "name": "Cheesecake",
+      "quantity": 2,
+      "lineTotalCents": 1500
+    },
+    {
+      "name": "Garlic Mashed",
+      "quantity": 3,
+      "lineTotalCents": 2100
+    },
+    {
+      "name": "Asparagus",
+      "quantity": 1,
+      "lineTotalCents": 850
+    },
+    {
+      "name": "Broccoli",
+      "quantity": 1,
+      "lineTotalCents": 700
+    },
+    {
+      "name": "Au Gratin Potato",
+      "quantity": 1,
+      "lineTotalCents": 800
+    },
+    {
+      "name": "Baked Pot. SC",
+      "quantity": 1,
+      "lineTotalCents": 600
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 6774,
+  "fees": [],
+  "printedTipCents": 16726,
+  "printedSubtotalCents": 83630,
+  "printedTotalCents": 107130,
+  "kinds": [
+    "long",
+    "auto-gratuity",
+    "quantity-line"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Header is cut off; party of 10. The bare '20 %' line has no price and is left out. '1 1/2 Wedge Salad' is read as quantity 1 of '1/2 Wedge Salad'. Arithmetic checks: 23 items sum to 836.30 = subtotal; 20% gratuity 167.26; 836.30 + 67.74 + 167.26 = 1,071.30."
+}

@@ -4,7 +4,29 @@ This folder holds the real receipt photos and the hand-written answers for the m
 (`SPEC.md` section 7.7). The eval reads each photo with each model, compares the result to your
 answer, and prints a comparison table you use to set the accuracy target and pick the model.
 
-**No real photos are committed yet.** You provide them.
+## Real licensed set
+
+12 real receipt photos from Wikimedia Commons and Flickr, under CC0, CC BY, or CC BY-SA, are
+committed here. `ATTRIBUTION.md` lists each file's author, license, source, and changes (all are
+resized, and card digits are covered on two). Their `.expected.json` files carry a `notes` field
+saying so; the answers are drafts until a human has checked them against the photos.
+
+Between them they cover `long`, `crumpled`, `auto-gratuity`, `surcharge`, `quantity-line`, and
+`non-usd` (three JPY, plus EUR, GBP, and HKD). **No licensed photo covers `handwritten-tip` or
+`discount`; those still need the captain's own photos** before the real set meets SPEC 7.7.
+
+Tax-inclusive receipts (JPY, EUR, GBP) record `taxCents: 0`, since the printed tax is already in
+the item prices and adding it would overshoot the total. The `notes` say what the receipt prints.
+
+## Local-only fixtures
+
+Photos that must not be public (unclear license, card or personal details) go in
+`fixtures/receipts-local/`, which is git-ignored. Give each one an `.expected.json` the same way,
+then run the eval against that folder:
+
+```sh
+npm run eval:receipts -- --dir fixtures/receipts-local --stub
+```
 
 ## Synthetic set (preliminary only)
 
@@ -26,7 +48,7 @@ photos land, at the captain's discretion.
 
 ## What to add
 
-At least **12 real receipt photos**, taken the way a payer would take them. Between them they must cover:
+Your own photos, at least for the missing kinds. The set needs at least **12 real receipt photos**, taken the way a payer would take them. Between them they must cover:
 
 | Kind (`kinds` tag) | What to look for |
 |---|---|

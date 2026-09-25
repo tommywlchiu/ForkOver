@@ -1,0 +1,31 @@
+{
+  "currency": "USD",
+  "items": [
+    {
+      "name": "TACO PLATE",
+      "quantity": 1,
+      "lineTotalCents": 599
+    },
+    {
+      "name": "SODA TEA",
+      "quantity": 2,
+      "lineTotalCents": 378
+    },
+    {
+      "name": "CHX SALAD",
+      "quantity": 1,
+      "lineTotalCents": 549
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 156,
+  "fees": [],
+  "printedTipCents": null,
+  "printedSubtotalCents": 1526,
+  "printedTotalCents": 1682,
+  "kinds": [
+    "crumpled",
+    "quantity-line"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. 'SODA TEA (2 @1.89) 3.78' is quantity 2. The Gratuity and TOTAL lines are blank, so printedTipCents is null and the total is the printed 'Dine In Total'. Card number and auth code covered. Arithmetic checks: 5.99 + 3.78 + 5.49 = 15.26; + 1.56 = 16.82."
+}

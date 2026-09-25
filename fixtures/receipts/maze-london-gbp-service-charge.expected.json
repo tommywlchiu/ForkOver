@@ -1,0 +1,57 @@
+{
+  "currency": "GBP",
+  "items": [
+    {
+      "name": "Chablis Piuze 125",
+      "quantity": 3,
+      "lineTotalCents": 3000
+    },
+    {
+      "name": "Eric Bordelet Poire",
+      "quantity": 1,
+      "lineTotalCents": 5000
+    },
+    {
+      "name": "Lagrein franz Haas",
+      "quantity": 1,
+      "lineTotalCents": 6100
+    },
+    {
+      "name": "Blanc du Castel 2010",
+      "quantity": 1,
+      "lineTotalCents": 10200
+    },
+    {
+      "name": "Vouvray Dilettante B",
+      "quantity": 1,
+      "lineTotalCents": 4100
+    },
+    {
+      "name": "Chefs Table",
+      "quantity": 5,
+      "lineTotalCents": 65000
+    },
+    {
+      "name": "Still Water",
+      "quantity": 2,
+      "lineTotalCents": 800
+    },
+    {
+      "name": "Sparkling Water",
+      "quantity": 3,
+      "lineTotalCents": 1200
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 0,
+  "fees": [],
+  "printedTipCents": 11925,
+  "printedSubtotalCents": null,
+  "printedTotalCents": 107325,
+  "kinds": [
+    "non-usd",
+    "quantity-line",
+    "auto-gratuity"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Prices print one line lower than their item names; each price is paired with the item above it (check). 'Opt Svc Ch' (12.5% optional service charge, 13 covers, added automatically) is treated as automatic gratuity (check). VAT is included in the prices (£158.99 printed), so taxCents is 0 (check). No subtotal is printed. Arithmetic checks: items sum to 954.00; 12.5% = 119.25; 954.00 + 119.25 = 1,073.25."
+}

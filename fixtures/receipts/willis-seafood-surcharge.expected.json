@@ -1,0 +1,45 @@
+{
+  "currency": "USD",
+  "items": [
+    {
+      "name": "Fries",
+      "quantity": 1,
+      "lineTotalCents": 1000
+    },
+    {
+      "name": "Sauteed Spinach",
+      "quantity": 1,
+      "lineTotalCents": 1000
+    },
+    {
+      "name": "Crab Cake",
+      "quantity": 1,
+      "lineTotalCents": 2400
+    },
+    {
+      "name": "Lobster Roll",
+      "quantity": 1,
+      "lineTotalCents": 3800
+    },
+    {
+      "name": "Cheese & Chorizo Fondue",
+      "quantity": 1,
+      "lineTotalCents": 1300
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 930,
+  "fees": [
+    {
+      "label": "3% BOH SRV CHG",
+      "cents": 285
+    }
+  ],
+  "printedTipCents": null,
+  "printedSubtotalCents": 9500,
+  "printedTotalCents": 10715,
+  "kinds": [
+    "surcharge"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Arithmetic checks: items 95.00 = subtotal; 95.00 + 2.85 + 9.30 = 107.15. Card number and approval code covered."
+}

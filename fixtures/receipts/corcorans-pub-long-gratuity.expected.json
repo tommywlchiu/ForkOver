@@ -1,0 +1,137 @@
+{
+  "currency": "USD",
+  "items": [
+    {
+      "name": "Fat Tire",
+      "quantity": 27,
+      "lineTotalCents": 10125
+    },
+    {
+      "name": "Jameson",
+      "quantity": 19,
+      "lineTotalCents": 5700
+    },
+    {
+      "name": "Sierra Nevada",
+      "quantity": 7,
+      "lineTotalCents": 3675
+    },
+    {
+      "name": "Blue Moon",
+      "quantity": 5,
+      "lineTotalCents": 1875
+    },
+    {
+      "name": "Magners Dft",
+      "quantity": 1,
+      "lineTotalCents": 550
+    },
+    {
+      "name": "Diet Coke",
+      "quantity": 1,
+      "lineTotalCents": 250
+    },
+    {
+      "name": "Steak Sandwich",
+      "quantity": 3,
+      "lineTotalCents": 2550
+    },
+    {
+      "name": "Hummus Platter",
+      "quantity": 2,
+      "lineTotalCents": 1590
+    },
+    {
+      "name": "Steak Sandwich Onion -Sauteed",
+      "quantity": 1,
+      "lineTotalCents": 950
+    },
+    {
+      "name": "35 cent Buffalo Wings (5 Wings)",
+      "quantity": 3,
+      "lineTotalCents": 525
+    },
+    {
+      "name": "Mac & Cheese",
+      "quantity": 1,
+      "lineTotalCents": 895
+    },
+    {
+      "name": "Fish & Chips",
+      "quantity": 1,
+      "lineTotalCents": 1195
+    },
+    {
+      "name": "Grill Chicken Wrap Avocado",
+      "quantity": 2,
+      "lineTotalCents": 1650
+    },
+    {
+      "name": "BBQ Chicken Wrap",
+      "quantity": 1,
+      "lineTotalCents": 775
+    },
+    {
+      "name": "Caesar Salad Portabella",
+      "quantity": 1,
+      "lineTotalCents": 945
+    },
+    {
+      "name": "Corned Beef Sand",
+      "quantity": 1,
+      "lineTotalCents": 895
+    },
+    {
+      "name": "Spinach & Artichoke Dip",
+      "quantity": 1,
+      "lineTotalCents": 795
+    },
+    {
+      "name": "Michelob Ultra",
+      "quantity": 1,
+      "lineTotalCents": 425
+    },
+    {
+      "name": "Affligem",
+      "quantity": 1,
+      "lineTotalCents": 675
+    },
+    {
+      "name": "Miller Lite Btl",
+      "quantity": 1,
+      "lineTotalCents": 425
+    },
+    {
+      "name": "Veggie Burger Avocado Blue Cheese",
+      "quantity": 1,
+      "lineTotalCents": 1000
+    },
+    {
+      "name": "Choc Suoffle",
+      "quantity": 1,
+      "lineTotalCents": 495
+    },
+    {
+      "name": "Hacker Pschor",
+      "quantity": 1,
+      "lineTotalCents": 625
+    },
+    {
+      "name": "Guinness",
+      "quantity": 1,
+      "lineTotalCents": 575
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 4504,
+  "fees": [],
+  "printedTipCents": 7049,
+  "printedSubtotalCents": 39160,
+  "printedTotalCents": 50713,
+  "kinds": [
+    "long",
+    "auto-gratuity",
+    "quantity-line"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Low-resolution scan (282 px wide). Priced modifiers are folded into their parent lines: Steak Sandwich + Onion -Sauteed 1.00; Grill Chicken Wrap (2 @7.75) + Avocado (2 @0.50) 1.00; Caesar Salad + Portabella 2.50; Veggie Burger + Avocado 1.00 + Blue Cheese 0.75. The wings line is truncated ('(3 @1 5.25', then '@ 0.35 per Wings'); read as quantity 3 at 1.75 (5 wings x 0.35), total 5.25 (check). The two printed 'Total' lines are 436.64 before and 507.13 after gratuity; the final one is used. Arithmetic checks: items 391.60 = subtotal; 18% gratuity 70.49; 391.60 + 45.04 + 70.49 = 507.13."
+}

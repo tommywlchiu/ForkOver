@@ -1,0 +1,80 @@
+{
+  "currency": "USD",
+  "items": [
+    {
+      "name": "Sampler Platter",
+      "quantity": 1,
+      "lineTotalCents": 1100
+    },
+    {
+      "name": "Sampler Platter",
+      "quantity": 1,
+      "lineTotalCents": 1100
+    },
+    {
+      "name": "Large Deep Fridge",
+      "quantity": 1,
+      "lineTotalCents": 2625
+    },
+    {
+      "name": "Large Deep Black",
+      "quantity": 1,
+      "lineTotalCents": 2625
+    },
+    {
+      "name": "Large Deep Touch",
+      "quantity": 1,
+      "lineTotalCents": 2625
+    },
+    {
+      "name": "Coke",
+      "quantity": 1,
+      "lineTotalCents": 275
+    },
+    {
+      "name": "Lemonade",
+      "quantity": 1,
+      "lineTotalCents": 275
+    },
+    {
+      "name": "Mr Pibb",
+      "quantity": 1,
+      "lineTotalCents": 275
+    },
+    {
+      "name": "Mr Pibb",
+      "quantity": 1,
+      "lineTotalCents": 275
+    },
+    {
+      "name": "Mr Pibb",
+      "quantity": 1,
+      "lineTotalCents": 275
+    },
+    {
+      "name": "Iced tea",
+      "quantity": 1,
+      "lineTotalCents": 275
+    },
+    {
+      "name": "Iced tea",
+      "quantity": 1,
+      "lineTotalCents": 275
+    },
+    {
+      "name": "Sprite",
+      "quantity": 1,
+      "lineTotalCents": 275
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 1075,
+  "fees": [],
+  "printedTipCents": 1841,
+  "printedSubtotalCents": 12275,
+  "printedTotalCents": 15191,
+  "kinds": [
+    "auto-gratuity"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Receipt lies on a tray next to cash; the left edge of the last lines is cut off ('rite' is read as Sprite). Repeated lines are kept as separate entries, as printed. The printed 'Gratuity $18.41' (15% of the subtotal) is treated as automatic gratuity (check). Arithmetic checks: items 122.75 = subtotal; 122.75 + 10.75 = 133.50; + 18.41 = 151.91 (final total). Not self-consistent: the tax footer prints 8.75% of $122.75 = $10.74, while the tax line says $10.75; 10.75 is used."
+}

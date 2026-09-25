@@ -1,0 +1,32 @@
+{
+  "currency": "EUR",
+  "items": [
+    {
+      "name": "So Deep So Fried",
+      "quantity": 1,
+      "lineTotalCents": 1200
+    },
+    {
+      "name": "Poppin Salmon",
+      "quantity": 1,
+      "lineTotalCents": 1250
+    },
+    {
+      "name": "Spa blauw",
+      "quantity": 2,
+      "lineTotalCents": 460
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 0,
+  "fees": [],
+  "printedTipCents": null,
+  "printedSubtotalCents": 2910,
+  "printedTotalCents": 2910,
+  "kinds": [
+    "crumpled",
+    "quantity-line",
+    "non-usd"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Dutch, heavily crumpled; a handwritten 'Rico wb' scribble crosses the total and is not a tip. Prices include 9% BTW (VAT 2,40 printed in the footer), so taxCents is 0 to keep items + tax = total (check: this is the tax-inclusive convention used across the real set). Arithmetic checks: 12,00 + 12,50 + 4,60 = 29,10."
+}

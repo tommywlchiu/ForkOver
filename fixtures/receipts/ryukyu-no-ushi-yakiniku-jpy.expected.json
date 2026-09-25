@@ -1,0 +1,27 @@
+{
+  "currency": "JPY",
+  "items": [
+    {
+      "name": "焼肉14種C",
+      "quantity": 2,
+      "lineTotalCents": 15356
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 0,
+  "fees": [
+    {
+      "label": "チャージ料",
+      "cents": 770
+    }
+  ],
+  "printedTipCents": null,
+  "printedSubtotalCents": 16126,
+  "printedTotalCents": 16126,
+  "kinds": [
+    "non-usd",
+    "quantity-line",
+    "surcharge"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. チャージ料 (385 x 2, a per-person table charge) is treated as a fee, not an item (check). The printed 小計 ¥16,126 includes that charge, so it is higher than the items alone. Prices are tax-inclusive (10% 消費税 ¥1,466 shown in parentheses), so taxCents is 0 (check). Arithmetic checks: 7,678 x 2 = 15,356; + 770 = 16,126."
+}

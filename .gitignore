@@ -41,3 +41,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local-only receipt fixtures (doubtful licenses or personal data), never committed
+fixtures/receipts-local/
