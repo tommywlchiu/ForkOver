@@ -46,6 +46,7 @@ npm run lint      # expo lint
 
 - `npm run eval:receipts -- --stub` runs the eval pipeline with no API key. Live runs, fixture format, and the scoring rules are in `fixtures/receipts/README.md`; the code is `scripts/eval-receipts.ts` and `src/lib/receipt/eval/`.
 - The script runs under Node's `--experimental-transform-types`, so everything it imports must use explicit `.ts` import extensions and no `enum`s. Files that import extensionlessly (`reconcile`, `toBill`) cannot be used from it.
+- Committed receipt photos must be licensed for public use and listed in `fixtures/receipts/ATTRIBUTION.md`. Anything else goes in the git-ignored `fixtures/receipts-local/` (run with `--dir`).
 - Cost figures come from `src/lib/receipt/eval/pricing.ts`. Update it when prices or the eval models change.
 - `ANTHROPIC_API_KEY` is read from the environment only. Never print, log, or write it.
 

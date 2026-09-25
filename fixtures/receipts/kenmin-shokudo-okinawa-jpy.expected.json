@@ -1,0 +1,36 @@
+{
+  "currency": "JPY",
+  "items": [
+    {
+      "name": "生姜焼き定食",
+      "quantity": 1,
+      "lineTotalCents": 790
+    },
+    {
+      "name": "揚げ餃子",
+      "quantity": 4,
+      "lineTotalCents": 1960
+    },
+    {
+      "name": "Cランチ",
+      "quantity": 1,
+      "lineTotalCents": 690
+    },
+    {
+      "name": "沖縄ちゃんぽん",
+      "quantity": 1,
+      "lineTotalCents": 690
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 0,
+  "fees": [],
+  "printedTipCents": null,
+  "printedSubtotalCents": 4130,
+  "printedTotalCents": 4130,
+  "kinds": [
+    "non-usd",
+    "quantity-line"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Prices are tax-inclusive (内); the printed 内消費税 ¥376 is already inside the total, so taxCents is 0 to keep items + tax = total (check). The '(ごはん無し' notes under two items are zero-price modifiers and are left out. Arithmetic checks: 790 + 1,960 + 690 + 690 = 4,130; item count 点数 7 = 1 + 4 + 1 + 1."
+}

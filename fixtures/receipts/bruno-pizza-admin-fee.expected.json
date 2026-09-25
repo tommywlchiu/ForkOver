@@ -1,0 +1,40 @@
+{
+  "currency": "USD",
+  "items": [
+    {
+      "name": "watermelon",
+      "quantity": 1,
+      "lineTotalCents": 1500
+    },
+    {
+      "name": "Pepperoni",
+      "quantity": 1,
+      "lineTotalCents": 1900
+    },
+    {
+      "name": "Tenuta Fal",
+      "quantity": 1,
+      "lineTotalCents": 1200
+    },
+    {
+      "name": "Gelato",
+      "quantity": 1,
+      "lineTotalCents": 1000
+    }
+  ],
+  "discountCents": 0,
+  "taxCents": 596,
+  "fees": [
+    {
+      "label": "Administration Fee (20%)",
+      "cents": 1120
+    }
+  ],
+  "printedTipCents": null,
+  "printedSubtotalCents": 5600,
+  "printedTotalCents": 7316,
+  "kinds": [
+    "surcharge"
+  ],
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Photo is cropped to the item lines (no header). A '1 ------ 0.00' separator line is left out as a zero-price line. The 20% administration fee replaces tipping and is taxed; it is treated as a fee, not a tip (check). Arithmetic checks: 56.00 + 11.20 + 5.96 = 73.16."
+}
