@@ -64,8 +64,8 @@ npm run lint       # expo lint
 
 ### Run `parse-receipt` locally
 
-Needs Docker. Copy the env template and fill in `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`
-(the file is git-ignored; never put these in client code):
+Needs Docker. Copy the env template and fill in `ANTHROPIC_API_KEY` (`ANTHROPIC_MODEL` is preset;
+the file is git-ignored; never put these in client code):
 
 ```sh
 cp supabase/functions/parse-receipt/.env.example supabase/functions/.env.local
