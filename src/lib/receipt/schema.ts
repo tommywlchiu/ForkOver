@@ -22,7 +22,7 @@ export type ParsedReceipt = {
   currency: string; // ISO 4217 as printed or inferred, e.g. "USD", "JPY"
   items: ParsedLineItem[];
   discountCents: number; // sum of discounts, coupons, comps, as a positive number
-  taxCents: number; // sum of all tax lines
+  taxCents: number; // sum of tax lines added on top; 0 when tax is included in prices
   fees: ParsedFee[]; // surcharges, delivery, and other non-tip fees
   printedTipCents: number | null; // auto-gratuity plus any printed or handwritten tip
   tipSource: TipSource | null;

@@ -18,7 +18,7 @@ Early development. The app UI is a single placeholder screen for now.
 | Milestone | State |
 | --- | --- |
 | **M1** Pure logic: split, claims, balance, money, Venmo links | Done |
-| **M2** Receipt parsing: structured output schema, streaming `parse-receipt` function, reconciliation, model eval | Built. Checkpoint open: the Haiku 4.5 vs Sonnet 5 choice is pending real receipt photos (only 10 synthetic fixtures so far) |
+| **M2** Receipt parsing: structured output schema, streaming `parse-receipt` function, reconciliation, model eval | Built. Model chosen at the checkpoint: Sonnet 5 (`ANTHROPIC_MODEL=claude-sonnet-5`), from an eval on 12 real and 10 synthetic receipts |
 | **M3** Payer app on one phone | Not started |
 | **M4** Shared bills (realtime, web claim page, guests) | Not started |
 | **M5** Payer controls (assignment, paid marks, balances, closing) | Not started |
@@ -64,8 +64,8 @@ npm run lint       # expo lint
 
 ### Run `parse-receipt` locally
 
-Needs Docker. Copy the env template and fill in `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL`
-(the file is git-ignored; never put these in client code):
+Needs Docker. Copy the env template and fill in `ANTHROPIC_API_KEY` (`ANTHROPIC_MODEL` is preset;
+the file is git-ignored; never put these in client code):
 
 ```sh
 cp supabase/functions/parse-receipt/.env.example supabase/functions/.env.local

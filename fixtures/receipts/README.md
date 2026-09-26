@@ -95,7 +95,7 @@ compare them line by line. **All amounts are integers in the currency's minor un
 | `currency` | ISO 4217 code, for example `"USD"` or `"JPY"` |
 | `items` | One entry per printed line: `name`, `quantity`, and `lineTotalCents` for the **whole line**. `2 Beer 17.00` is quantity 2, `1700`. Fold priced modifiers into the parent line. Leave out zero-price modifiers and voided lines. |
 | `discountCents` | Sum of all discounts, coupons, and comps, as a **positive** number. `0` if none. |
-| `taxCents` | Sum of all tax lines. `0` if none. |
+| `taxCents` | Sum of tax lines added on top of the item prices. `0` if none, or if tax is included in the prices. |
 | `fees` | Surcharges and other non-tip fees: `{ "label": "...", "cents": 0 }`. `[]` if none. |
 | `printedTipCents` | Automatic gratuity plus any printed or handwritten tip. `null` if the receipt shows none. |
 | `printedSubtotalCents` | The subtotal printed on the receipt, or `null` if it prints none. |
