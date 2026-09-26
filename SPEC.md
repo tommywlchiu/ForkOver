@@ -307,7 +307,7 @@ The app resizes the photo (7.6), then POSTs it to the `parse-receipt` Edge Funct
 - Env vars: `ANTHROPIC_API_KEY` (secret), `ANTHROPIC_MODEL` (`claude-sonnet-5`, chosen at the M2 checkpoint), `MAX_IMAGE_BYTES`.
 - Use `@anthropic-ai/sdk` if it runs cleanly in the Edge Function runtime; otherwise call the REST endpoint with `fetch`.
 - Never log image data. Store it only in the private receipts bucket (8.4).
-- Streaming with structured outputs: parse the partial JSON incrementally (`partialJson.ts`) and emit each item once its object closes. If the chosen model can't stream structured output, fall back to a single response and report the latency impact at the M2 checkpoint.
+- Streaming with structured outputs: parse the partial JSON incrementally (`partialJson.ts`) and emit each item once its object closes. Zero-price items are never emitted; the final receipt leaves them out and adds a `"<name>" has no charge` warning for each (7.4). If the chosen model can't stream structured output, fall back to a single response and report the latency impact at the M2 checkpoint.
 
 ### 7.2 Error codes
 
@@ -339,6 +339,7 @@ Keep `schema.ts` as the single source for the TypeScript type and the JSON schem
 ### 7.4 Parser instructions (system prompt content)
 
 - Extract line items exactly as printed. Do not invent items.
+- An item's price is the one printed on its own row. A line that prints no price (a set or course name, a note) is not an item: leave it out and add a warning naming it. Never move a price up or down to another line. (If the model still returns such a line at 0, `parseReceipt.ts` drops it with a warning saying it has no charge, as it does any zero-price item; see 7.1.)
 - Return every amount in the currency's minor units: cents for USD, whole yen for JPY.
 - A quantity line such as "2 Beer 17.00" becomes one item with quantity 2 and line total 1700. The app expands it (6.5).
 - Priced modifiers ("+ avocado 2.00") fold into the parent item's line total and name. Zero-price modifiers are ignored. Voided lines are excluded.
