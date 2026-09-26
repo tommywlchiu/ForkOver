@@ -29,12 +29,17 @@
   ],
   "discountCents": 0,
   "taxCents": 930,
-  "fees": [],
-  "printedTipCents": 285,
+  "fees": [
+    {
+      "label": "3% BOH SRV CHG",
+      "cents": 285
+    }
+  ],
+  "printedTipCents": null,
   "printedSubtotalCents": 9500,
   "printedTotalCents": 10715,
   "kinds": [
-    "auto-gratuity"
+    "surcharge"
   ],
-  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. '3% BOH SRV CHG' is labeled a service charge, so it is a tip (SPEC 7.4), though \"BOH\" suggests a back-of-house charge (check). Arithmetic checks: items 95.00 = subtotal; 95.00 + 2.85 + 9.30 = 107.15. Card number and approval code covered."
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. '3% BOH SRV CHG' is a back-of-house (kitchen) charge, so it is a fee even though it is labeled a service charge (SPEC 7.4). Arithmetic checks: items 95.00 = subtotal; 95.00 + 2.85 + 9.30 = 107.15. Card number and approval code covered."
 }
