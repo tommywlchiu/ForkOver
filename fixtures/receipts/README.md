@@ -148,13 +148,17 @@ For each receipt and model:
 
 - **Every item and price**: each expected item pairs with one returned item having the same name, quantity, and
   line total, in any order. Names ignore case, punctuation, and spacing. Missing or extra items fail this check.
+- **Item prices**: the same pairing, but only quantity and line total must agree; names are ignored. A name-only
+  difference (a `(2 @1.89)` note, a dropped modifier) passes here and fails the strict check above. Prices swapped between
+  items fail both.
 - **Item count**: the number of items is the same.
 - **Subtotal, Total**: equal to the printed figures (`null` must match `null`).
 - **Tax, Discount**: equal.
 - **Tip**: equal, where no tip and `0` count as the same.
 - **Fees**: the fee amounts add up to the same sum (labels are not compared).
 - **Currency**: same ISO code.
-- **Everything right**: all of the above.
+- **Money right**: like Everything right, but item names are ignored (Item prices instead of Every item and price).
+- **Everything right**: all of the above, with strict item names.
 
 A scan that fails (an upstream or output error) counts as failing every check.
 The report also gives time to first item and time to done (median and 90th percentile), input and output tokens, and cost per scan,
