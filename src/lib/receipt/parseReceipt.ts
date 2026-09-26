@@ -88,14 +88,15 @@ export async function* parseReceiptImage(
 /**
  * A line that prints no price is not an item (SPEC 7.4). When the model returns
  * one anyway, at zero, drop it and name it in a warning for the review screen.
+ * A comped item printed at 0.00 is dropped the same way, so the warning only
+ * says there is no charge, not that no price was printed.
  */
 export function dropUnpricedItems(receipt: ParsedReceipt): ParsedReceipt {
   const unpriced = receipt.items.filter((item) => item.lineTotalCents === 0);
   if (unpriced.length === 0) return receipt;
-  const names = unpriced.map((item) => `"${item.name}"`).join(', ');
   return {
     ...receipt,
     items: receipt.items.filter((item) => item.lineTotalCents > 0),
-    warnings: [...receipt.warnings, `No price printed for ${names}; left out of the items.`],
+    warnings: [...receipt.warnings, ...unpriced.map((item) => `"${item.name}" has no charge; left out of the items.`)],
   };
 }

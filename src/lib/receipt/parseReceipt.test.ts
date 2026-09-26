@@ -151,7 +151,7 @@ describe('parseReceiptImage', () => {
     ]);
     expect(events.at(-1)).toMatchObject({
       type: 'done',
-      receipt: { items: sampleReceipt.items, warnings: ['No price printed for "Omakase F"; left out of the items.'] },
+      receipt: { items: sampleReceipt.items, warnings: ['"Omakase F" has no charge; left out of the items.'] },
     });
   });
 
@@ -167,7 +167,7 @@ describe('dropUnpricedItems', () => {
     expect(dropUnpricedItems(sampleReceipt)).toBe(sampleReceipt);
   });
 
-  it('drops every zero-price item and names them all in one warning after the model\'s own', () => {
+  it('drops every zero-price item and adds a warning for each after the model\'s own', () => {
     const receipt = {
       ...sampleReceipt,
       items: [
@@ -179,7 +179,11 @@ describe('dropUnpricedItems', () => {
     };
     expect(dropUnpricedItems(receipt)).toEqual({
       ...sampleReceipt,
-      warnings: ['Top of receipt is folded', 'No price printed for "Set A", "No rice"; left out of the items.'],
+      warnings: [
+        'Top of receipt is folded',
+        '"Set A" has no charge; left out of the items.',
+        '"No rice" has no charge; left out of the items.',
+      ],
     });
   });
 });
