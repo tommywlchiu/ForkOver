@@ -41,7 +41,7 @@ export async function* parseReceiptImage(
       }
       for (const raw of parser.push(chunk.text)) {
         const item = validateLineItem(raw);
-        if (item.ok) yield { type: 'item', ...item.item };
+        if (item.ok && item.item.lineTotalCents > 0) yield { type: 'item', ...item.item };
       }
     }
   } catch (error) {
@@ -82,5 +82,20 @@ export async function* parseReceiptImage(
     yield { type: 'error', code: 'NOT_A_RECEIPT' };
     return;
   }
-  yield { type: 'done', receipt: result.receipt, usage: end.usage };
+  yield { type: 'done', receipt: dropUnpricedItems(result.receipt), usage: end.usage };
+}
+
+/**
+ * A line that prints no price is not an item (SPEC 7.4). When the model returns
+ * one anyway, at zero, drop it and name it in a warning for the review screen.
+ */
+export function dropUnpricedItems(receipt: ParsedReceipt): ParsedReceipt {
+  const unpriced = receipt.items.filter((item) => item.lineTotalCents === 0);
+  if (unpriced.length === 0) return receipt;
+  const names = unpriced.map((item) => `"${item.name}"`).join(', ');
+  return {
+    ...receipt,
+    items: receipt.items.filter((item) => item.lineTotalCents > 0),
+    warnings: [...receipt.warnings, `No price printed for ${names}; left out of the items.`],
+  };
 }

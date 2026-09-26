@@ -1,7 +1,7 @@
 import { toBase64, type AnthropicConfig } from './anthropic';
 import { sampleReceipt } from './fixtures';
 import { chunkText, mockAnthropicFetch, type MockStream } from './mockAnthropic';
-import { parseReceiptImage, type ParseEvent } from './parseReceipt';
+import { dropUnpricedItems, parseReceiptImage, type ParseEvent } from './parseReceipt';
 import { RECEIPT_JSON_SCHEMA } from './schema';
 
 const image = new Uint8Array([1, 2, 3, 250, 251, 252]);
@@ -139,9 +139,47 @@ describe('parseReceiptImage', () => {
     });
   });
 
+  it('never emits a row that prints no price, and leaves it out of the receipt with a warning', async () => {
+    const withUnpriced = {
+      ...sampleReceipt,
+      items: [sampleReceipt.items[0], { name: 'Omakase F', quantity: 1, lineTotalCents: 0 }, sampleReceipt.items[1]],
+    };
+    const { events } = await collect({ textChunks: chunkText(JSON.stringify(withUnpriced), 30) });
+    expect(events.filter((e) => e.type === 'item')).toEqual([
+      { type: 'item', ...sampleReceipt.items[0] },
+      { type: 'item', ...sampleReceipt.items[1] },
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      receipt: { items: sampleReceipt.items, warnings: ['No price printed for "Omakase F"; left out of the items.'] },
+    });
+  });
+
   it('reports NOT_A_RECEIPT when the model says the photo is not a receipt', async () => {
     const notReceipt = { ...sampleReceipt, isReceipt: false, items: [], fees: [], currency: '' };
     const { events } = await collect({ textChunks: [JSON.stringify(notReceipt)] });
     expect(events).toEqual([{ type: 'error', code: 'NOT_A_RECEIPT' }]);
+  });
+});
+
+describe('dropUnpricedItems', () => {
+  it('returns the receipt unchanged when every item has a price', () => {
+    expect(dropUnpricedItems(sampleReceipt)).toBe(sampleReceipt);
+  });
+
+  it('drops every zero-price item and names them all in one warning after the model\'s own', () => {
+    const receipt = {
+      ...sampleReceipt,
+      items: [
+        { name: 'Set A', quantity: 1, lineTotalCents: 0 },
+        ...sampleReceipt.items,
+        { name: 'No rice', quantity: 1, lineTotalCents: 0 },
+      ],
+      warnings: ['Top of receipt is folded'],
+    };
+    expect(dropUnpricedItems(receipt)).toEqual({
+      ...sampleReceipt,
+      warnings: ['Top of receipt is folded', 'No price printed for "Set A", "No rice"; left out of the items.'],
+    });
   });
 });
