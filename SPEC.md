@@ -344,7 +344,7 @@ Keep `schema.ts` as the single source for the TypeScript type and the JSON schem
 - Priced modifiers ("+ avocado 2.00") fold into the parent item's line total and name. Zero-price modifiers are ignored. Voided lines are excluded.
 - Negative lines (discounts, comps, coupons) are summed into `discountCents`, never returned as negative items.
 - `taxCents` is only tax added on top of the item prices. Tax already included in the prices (内税, 内消費税, "VAT included", "BTW incl.") is not added again: `taxCents` is 0.
-- `printedSubtotalCents` and `printedTotalCents` come only from a printed subtotal or total line; use null when the receipt prints none, never a computed figure. Cash tendered and change are never the total.
+- `printedSubtotalCents` and `printedTotalCents` come only from a subtotal or total line written on the receipt (printed, or a handwritten total when present; `printedTotalCents` is the final one). Use null when there is none, never a computed figure. Cash tendered and change are never the total.
 - Automatic gratuity and any printed or handwritten tip go in `printedTipCents` with the matching `tipSource` (FR-11). Other surcharges and service fees go in `fees`.
 - If the image is not a receipt, return `isReceipt: false` with empty arrays and zeros.
 - Add a warning for anything uncertain rather than guessing silently.
