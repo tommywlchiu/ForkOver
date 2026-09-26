@@ -35,7 +35,7 @@ function receiptTable(model: string, results: readonly ScanResult[]): string {
   const header = ['receipt', ...CHECKS.filter((c) => c.key !== 'allMatch').map((c) => c.label), 'first item', 'done', 'in tok', 'out tok', 'cost'];
   const rows = results.map((r) => {
     if (r.score === null) {
-      return [r.fixture, `ERROR ${r.errorCode ?? 'NO_RESULT'}`, ...CHECKS.slice(1, -1).map(() => dash), formatSeconds(r.firstItemMs), dash, dash, dash, dash];
+      return [r.fixture, `ERROR ${r.errorCode ?? 'NO_RESULT'}`, ...CHECKS.filter((c) => c.key !== 'allMatch').map(() => dash), formatSeconds(r.firstItemMs), dash, dash, dash, dash];
     }
     const { score } = r;
     const cells = CHECKS.filter((c) => c.key !== 'allMatch').map(({ key }) => {
