@@ -62,6 +62,8 @@ npm run typecheck  # tsc --noEmit
 npm run lint       # expo lint
 ```
 
+GitHub Actions runs these three checks on every pull request and push to `master`.
+
 ### Run `parse-receipt` locally
 
 Needs Docker. Copy the env template and fill in `ANTHROPIC_API_KEY` (`ANTHROPIC_MODEL` is preset;
