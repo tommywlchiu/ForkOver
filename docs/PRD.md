@@ -168,7 +168,7 @@ These are the v1 functional requirements. IDs are stable references for the spec
 - FR-26: Leftover pennies from rounding go to the payer. Everyone else's share is rounded down to the cent and the payer's share is whatever remains, so nobody else ever pays more than their exact share and totals still match the receipt.
 - FR-27: A discount on the whole receipt is divided in proportion to each person's item subtotal. Tax and tip shares are then based on each person's subtotal after the discount.
 - FR-28: Anyone who has claimed no items owes $0, including fees split equally. Equal-split fees are shared only among people who claimed at least one item.
-- FR-29: Extra fees on the receipt, such as a service charge or restaurant surcharge, are split in proportion to what each person ordered. The payer can switch any single fee to an even split during review.
+- FR-29: Extra fees on the receipt, such as a restaurant surcharge or administration fee, are split in proportion to what each person ordered. The payer can switch any single fee to an even split during review.
 
 **Currency**
 

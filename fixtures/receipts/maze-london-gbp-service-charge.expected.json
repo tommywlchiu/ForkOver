@@ -53,5 +53,5 @@
     "quantity-line",
     "auto-gratuity"
   ],
-  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Prices print one line lower than their item names; each price is paired with the item above it (check). 'Opt Svc Ch' (12.5% optional service charge, 13 covers, added automatically) is treated as automatic gratuity (check). VAT is included in the prices (£158.99 printed), so taxCents is 0 (check). No subtotal is printed. Arithmetic checks: items sum to 954.00; 12.5% = 119.25; 954.00 + 119.25 = 1,073.25."
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Prices print one line lower than their item names; each price is paired with the item above it (check). 'Opt Svc Ch' (12.5% optional service charge, 13 covers, added automatically) is a service charge, so it is a tip (SPEC 7.4). VAT is included in the prices (£158.99 printed), so taxCents is 0 (check). No subtotal is printed. Arithmetic checks: items sum to 954.00; 12.5% = 119.25; 954.00 + 119.25 = 1,073.25."
 }
