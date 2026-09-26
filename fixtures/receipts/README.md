@@ -55,9 +55,9 @@ Your own photos, at least for the missing kinds. The set needs at least **12 rea
 | `long` | A long receipt, many lines, the kind that needs scrolling |
 | `crumpled` | Creased or crumpled paper |
 | `handwritten-tip` | A tip and total written in by hand |
-| `auto-gratuity` | An automatic gratuity printed on the receipt (large-party charge) |
+| `auto-gratuity` | An automatic gratuity or service charge printed on the receipt |
 | `discount` | A discount, coupon, or comp (a negative line) |
-| `surcharge` | A surcharge or service fee that is not a tip |
+| `surcharge` | A surcharge or fee that is not a service charge or tip |
 | `quantity-line` | A line like `2 Beer 17.00` |
 | `non-usd` | Not US dollars, JPY if you can |
 
@@ -96,8 +96,8 @@ compare them line by line. **All amounts are integers in the currency's minor un
 | `items` | One entry per printed line: `name`, `quantity`, and `lineTotalCents` for the **whole line**. `2 Beer 17.00` is quantity 2, `1700`. Fold priced modifiers into the parent line. Leave out zero-price modifiers and voided lines. |
 | `discountCents` | Sum of all discounts, coupons, and comps, as a **positive** number. `0` if none. |
 | `taxCents` | Sum of tax lines added on top of the item prices. `0` if none, or if tax is included in the prices. |
-| `fees` | Surcharges and other non-tip fees: `{ "label": "...", "cents": 0 }`. `[]` if none. |
-| `printedTipCents` | Automatic gratuity plus any printed or handwritten tip. `null` if the receipt shows none. |
+| `fees` | Surcharges and other fees that are not a service charge or tip: `{ "label": "...", "cents": 0 }`. `[]` if none. |
+| `printedTipCents` | Automatic gratuity (including a service charge) plus any printed or handwritten tip. `null` if the receipt shows none. |
 | `printedSubtotalCents` | The subtotal printed on the receipt, or `null` if it prints none. |
 | `printedTotalCents` | The final total (the handwritten total if there is one), or `null`. |
 
@@ -115,7 +115,7 @@ FAKE DINER
 Coupon             -5.00
 Subtotal            30.95    <- printed
 Tax                  3.00
-Service charge       2.00
+Kitchen surcharge    2.00
 Tip (handwritten)    4.00
 TOTAL               39.95    <- handwritten
 ```
@@ -131,7 +131,7 @@ TOTAL               39.95    <- handwritten
   ],
   "discountCents": 500,
   "taxCents": 300,
-  "fees": [{ "label": "Service charge", "cents": 200 }],
+  "fees": [{ "label": "Kitchen surcharge", "cents": 200 }],
   "printedTipCents": 400,
   "printedSubtotalCents": 3095,
   "printedTotalCents": 3995,

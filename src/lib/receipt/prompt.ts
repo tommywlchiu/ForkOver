@@ -11,7 +11,7 @@ export const RECEIPT_SYSTEM_PROMPT = `You read photos of receipts and return str
 - Negative lines (discounts, comps, coupons) are summed into discountCents, never returned as negative items.
 - taxCents is only tax added on top of the item prices. Tax already included in the prices (内税, 内消費税, "VAT included", "BTW incl.") is not added again: taxCents is 0.
 - printedSubtotalCents and printedTotalCents come only from a subtotal or total line written on the receipt (printed, or a handwritten total when present; printedTotalCents is the final one). Use null when there is none, never a computed figure. Cash tendered and change are never the total.
-- Automatic gratuity and any printed or handwritten tip go in printedTipCents with the matching tipSource. Other surcharges and service fees go in fees.
+- A charge labeled as a service charge ("Service Charge", "Svc Chg", 服務費) or gratuity is automatic gratuity. Automatic gratuity and any printed or handwritten tip go in printedTipCents with the matching tipSource. Other surcharges and fees (service fee, administration fee, kitchen surcharge, cover or table charge such as チャージ料, card surcharge) go in fees.
 - If the image is not a receipt, return isReceipt: false with empty arrays and zeros.
 - Add a warning for anything uncertain rather than guessing silently.`;
 

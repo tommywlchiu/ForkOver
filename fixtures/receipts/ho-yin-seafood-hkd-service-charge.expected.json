@@ -33,5 +33,5 @@
     "auto-gratuity",
     "quantity-line"
   ],
-  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Chinese text. The 10% 服務費 (service charge) is treated as automatic gratuity (check; it could be read as a fee). 約數差額 0.0 is a zero rounding line. Hong Kong has no sales tax. Arithmetic checks: 28.80 + 11.80 + 11.80 + 14.00 = 66.40 (項目總和 66.4); + 6.60 = 73.00."
+  "notes": "Real receipt photo, permissively licensed (see ATTRIBUTION.md). DRAFT answers transcribed by an agent from the image, pending human check. Chinese text. The 10% 服務費 (service charge) is a service charge, so it is a tip (SPEC 7.4). 約數差額 0.0 is a zero rounding line. Hong Kong has no sales tax. Arithmetic checks: 28.80 + 11.80 + 11.80 + 14.00 = 66.40 (項目總和 66.4); + 6.60 = 73.00."
 }
