@@ -304,7 +304,7 @@ The app resizes the photo (7.6), then POSTs it to the `parse-receipt` Edge Funct
 4. Streams newline-delimited JSON events back to the app as they become available: `{ "type": "item", ... }` for each complete item, `{ "type": "done", "billId": ..., "receipt": ... }` at the end, or `{ "type": "error", "code": ... }`.
 5. Validates the final result (7.3) and counts a quota use only on success with `isReceipt: true`.
 
-- Env vars: `ANTHROPIC_API_KEY` (secret), `ANTHROPIC_MODEL` (set from the M2 eval), `MAX_IMAGE_BYTES`.
+- Env vars: `ANTHROPIC_API_KEY` (secret), `ANTHROPIC_MODEL` (`claude-sonnet-5`, chosen at the M2 checkpoint), `MAX_IMAGE_BYTES`.
 - Use `@anthropic-ai/sdk` if it runs cleanly in the Edge Function runtime; otherwise call the REST endpoint with `fetch`.
 - Never log image data. Store it only in the private receipts bucket (8.4).
 - Streaming with structured outputs: parse the partial JSON incrementally (`partialJson.ts`) and emit each item once its object closes. If the chosen model can't stream structured output, fall back to a single response and report the latency impact at the M2 checkpoint.
@@ -324,7 +324,7 @@ type ParsedReceipt = {
   currency: string;                   // ISO 4217 as printed or inferred, e.g. "USD", "JPY"
   items: Array<{ name: string; quantity: number; lineTotalCents: number }>; // minor units
   discountCents: number;              // sum of discounts, coupons, comps, as a positive number
-  taxCents: number;                   // sum of all tax lines
+  taxCents: number;                   // sum of tax lines added on top; 0 when tax is included in prices
   fees: Array<{ label: string; cents: number }>; // surcharges, delivery, and other non-tip fees
   printedTipCents: number | null;     // auto-gratuity plus any printed or handwritten tip
   tipSource: 'printed' | 'handwritten' | 'autoGratuity' | 'mixed' | null;
@@ -343,6 +343,8 @@ Keep `schema.ts` as the single source for the TypeScript type and the JSON schem
 - A quantity line such as "2 Beer 17.00" becomes one item with quantity 2 and line total 1700. The app expands it (6.5).
 - Priced modifiers ("+ avocado 2.00") fold into the parent item's line total and name. Zero-price modifiers are ignored. Voided lines are excluded.
 - Negative lines (discounts, comps, coupons) are summed into `discountCents`, never returned as negative items.
+- `taxCents` is only tax added on top of the item prices. Tax already included in the prices (内税, 内消費税, "VAT included", "BTW incl.") is not added again: `taxCents` is 0.
+- `printedSubtotalCents` and `printedTotalCents` come only from a printed subtotal or total line; use null when the receipt prints none, never a computed figure. Cash tendered and change are never the total.
 - Automatic gratuity and any printed or handwritten tip go in `printedTipCents` with the matching `tipSource` (FR-11). Other surcharges and service fees go in `fees`.
 - If the image is not a receipt, return `isReceipt: false` with empty arrays and zeros.
 - Add a warning for anything uncertain rather than guessing silently.
@@ -373,7 +375,7 @@ Put at least 12 real receipt photos in `fixtures/receipts/` with a hand-written 
 - time to first item and time to done (median and 90th percentile)
 - input and output tokens, and cost per scan
 
-Run it for `claude-haiku-4-5-20251001` and `claude-sonnet-5` and report a comparison table. The human sets the accuracy target and picks the model at the M2 checkpoint (PRD Success metrics). Rerun the eval on every prompt or model change before it ships.
+Run it for `claude-haiku-4-5-20251001` and `claude-sonnet-5` and report a comparison table. The human sets the accuracy target and picks the model at the M2 checkpoint (PRD Success metrics); the pick is `claude-sonnet-5`. Rerun the eval on every prompt or model change before it ships.
 
 ## 8. Backend
 
