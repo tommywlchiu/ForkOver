@@ -155,6 +155,24 @@ describe('parseReceiptImage', () => {
     });
   });
 
+  it('warns in the final receipt when an item\'s price is not on the row that names it', async () => {
+    const shifted = {
+      ...sampleReceipt,
+      rows: ['2 Draft Beer 17.00', 'Omakase F', 'Katsu 18.95'],
+      items: [sampleReceipt.items[0], { name: 'Omakase F', quantity: 1, lineTotalCents: 1895 }],
+    };
+    const { events } = await collect({ textChunks: chunkText(JSON.stringify(shifted), 30) });
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      receipt: {
+        items: shifted.items,
+        warnings: [
+          'Prices may be on the wrong lines. These items don\'t match the price printed on their own line on the receipt: "Omakase F". Check them against the receipt.',
+        ],
+      },
+    });
+  });
+
   it('reports NOT_A_RECEIPT when the model says the photo is not a receipt', async () => {
     const notReceipt = { ...sampleReceipt, isReceipt: false, items: [], fees: [], currency: '' };
     const { events } = await collect({ textChunks: [JSON.stringify(notReceipt)] });

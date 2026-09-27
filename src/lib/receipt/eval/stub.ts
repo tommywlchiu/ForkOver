@@ -4,11 +4,23 @@
  * and no spend. The stub "model" reads the fixture's own expected answer back,
  * so its accuracy figures say nothing about any real model.
  */
+import { currencyExponent } from '../../money/currency.ts';
 import { chunkText, mockAnthropicFetch } from '../mockAnthropic.ts';
-import type { ParsedReceipt } from '../schema.ts';
+import type { ParsedLineItem, ParsedReceipt } from '../schema.ts';
 import { sampleReceipt } from '../fixtures.ts';
 import type { ExpectedReceipt } from './expected.ts';
 import type { EvalFixture } from './types.ts';
+
+/** One printed row per item, such as "2 Draft Beer 17.00", so the row check passes. */
+export function rowsFromItems(items: readonly ParsedLineItem[], currency: string): string[] {
+  const exponent = currencyExponent(currency);
+  return items.map((item) => {
+    const whole = Math.floor(item.lineTotalCents / 10 ** exponent);
+    const fraction = String(item.lineTotalCents % 10 ** exponent).padStart(exponent, '0');
+    const price = exponent > 0 ? `${whole}.${fraction}` : `${whole}`;
+    return `${item.quantity > 1 ? `${item.quantity} ` : ''}${item.name} ${price}`;
+  });
+}
 
 /** The receipt a perfect model would return for `expected`. */
 export function receiptFromExpected(expected: ExpectedReceipt): ParsedReceipt {
@@ -16,6 +28,7 @@ export function receiptFromExpected(expected: ExpectedReceipt): ParsedReceipt {
     isReceipt: true,
     merchantName: 'Stub Merchant',
     currency: expected.currency,
+    rows: rowsFromItems(expected.items, expected.currency),
     items: expected.items,
     discountCents: expected.discountCents,
     taxCents: expected.taxCents,

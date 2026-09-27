@@ -20,6 +20,7 @@ export type ParsedReceipt = {
   isReceipt: boolean;
   merchantName: string | null;
   currency: string; // ISO 4217 as printed or inferred, e.g. "USD", "JPY"
+  rows: string[]; // every printed line of the item area, verbatim, top to bottom, priced or not
   items: ParsedLineItem[];
   discountCents: number; // sum of discounts, coupons, comps, as a positive number
   taxCents: number; // sum of tax lines added on top; 0 when tax is included in prices
@@ -38,7 +39,9 @@ export const TIP_SOURCES: readonly TipSource[] = ['printed', 'handwritten', 'aut
  * `additionalProperties: false` on every object, every property listed in
  * `required`, and no numeric constraints, so ranges are enforced in
  * `validateReceipt`. Property order matters: the model writes fields in this
- * order, and items come after the fields the review screen needs first.
+ * order, and items come after the fields the review screen needs first. The
+ * printed rows come just before the items, so the model has read every line,
+ * priced or not, before it pairs names with prices (SPEC 7.3).
  */
 const nullable = (schema: Record<string, unknown>) => ({ anyOf: [schema, { type: 'null' }] });
 
@@ -48,6 +51,7 @@ export const RECEIPT_JSON_SCHEMA = {
     isReceipt: { type: 'boolean' },
     merchantName: nullable({ type: 'string' }),
     currency: { type: 'string' },
+    rows: { type: 'array', items: { type: 'string' } },
     items: {
       type: 'array',
       items: {
@@ -85,6 +89,7 @@ export const RECEIPT_JSON_SCHEMA = {
     'isReceipt',
     'merchantName',
     'currency',
+    'rows',
     'items',
     'discountCents',
     'taxCents',
@@ -180,6 +185,13 @@ export function validateReceipt(value: unknown): ReceiptValidation {
     }
   }
 
+  let rows: string[] = [];
+  if (!Array.isArray(value.rows) || !value.rows.every((row) => typeof row === 'string')) {
+    errors.push('rows must be an array of strings');
+  } else {
+    rows = value.rows as string[];
+  }
+
   const items: ParsedLineItem[] = [];
   if (!Array.isArray(value.items)) {
     errors.push('items must be an array');
@@ -240,6 +252,7 @@ export function validateReceipt(value: unknown): ReceiptValidation {
       isReceipt: value.isReceipt as boolean,
       merchantName: merchantName as string | null,
       currency,
+      rows,
       items,
       discountCents: value.discountCents as number,
       taxCents: value.taxCents as number,

@@ -307,7 +307,7 @@ The app resizes the photo (7.6), then POSTs it to the `parse-receipt` Edge Funct
 - Env vars: `ANTHROPIC_API_KEY` (secret), `ANTHROPIC_MODEL` (`claude-sonnet-5`, chosen at the M2 checkpoint), `MAX_IMAGE_BYTES`.
 - Use `@anthropic-ai/sdk` if it runs cleanly in the Edge Function runtime; otherwise call the REST endpoint with `fetch`.
 - Never log image data. Store it only in the private receipts bucket (8.4).
-- Streaming with structured outputs: parse the partial JSON incrementally (`partialJson.ts`) and emit each item once its object closes. Zero-price items are never emitted; the final receipt leaves them out and adds a `"<name>" has no charge` warning for each (7.4). If the chosen model can't stream structured output, fall back to a single response and report the latency impact at the M2 checkpoint.
+- Streaming with structured outputs: parse the partial JSON incrementally (`partialJson.ts`) and emit each item once its object closes. Zero-price items are never emitted; the final receipt leaves them out and adds a `"<name>" has no charge` warning for each (7.4), then runs the row check (7.5). If the chosen model can't stream structured output, fall back to a single response and report the latency impact at the M2 checkpoint.
 
 ### 7.2 Error codes
 
@@ -322,6 +322,7 @@ type ParsedReceipt = {
   isReceipt: boolean;
   merchantName: string | null;
   currency: string;                   // ISO 4217 as printed or inferred, e.g. "USD", "JPY"
+  rows: string[];                     // every printed line of the ordered items, verbatim, priced or not
   items: Array<{ name: string; quantity: number; lineTotalCents: number }>; // minor units
   discountCents: number;              // sum of discounts, coupons, comps, as a positive number
   taxCents: number;                   // sum of tax lines added on top; 0 when tax is included in prices
@@ -334,11 +335,12 @@ type ParsedReceipt = {
 };
 ```
 
-Keep `schema.ts` as the single source for the TypeScript type and the JSON schema. Validate at runtime: all amounts non-negative integers, quantity an integer of at least 1, currency a known ISO 4217 code. Failures return `INVALID_OUTPUT`.
+`rows` comes just before `items`, so the model has copied every line, including lines with no price, before it pairs names with prices; the row check (7.5) reads prices back out of it. Keep `schema.ts` as the single source for the TypeScript type and the JSON schema. Validate at runtime: all amounts non-negative integers, quantity an integer of at least 1, currency a known ISO 4217 code. Failures return `INVALID_OUTPUT`.
 
 ### 7.4 Parser instructions (system prompt content)
 
 - Extract line items exactly as printed. Do not invent items.
+- In `rows`, copy every printed line of the ordered items, top to bottom, exactly as printed with its quantity and price, one string per line. Include modifiers, notes, and lines that print no price. Stop at the subtotal, or at the total when there is none.
 - An item's price is the one printed on its own row. A line that prints no price (a set or course name, a note) is not an item: leave it out and add a warning naming it. Never move a price up or down to another line. (If the model still returns such a line at 0, `parseReceipt.ts` drops it with a warning saying it has no charge, as it does any zero-price item; see 7.1.)
 - Return every amount in the currency's minor units: cents for USD, whole yen for JPY.
 - A quantity line such as "2 Beer 17.00" becomes one item with quantity 2 and line total 1700. The app expands it (6.5).
@@ -358,7 +360,9 @@ Three checks, all shown on the review screen, none blocking:
 2. **Total:** items - discount + tax + (tip ?? 0) + fees vs `printedTotalCents`, with the same style of message.
 3. **Unreadable tip (section 13, default 9):** if no tip was read and `printedTotalCents` exceeds items - discount + tax + fees, show "Looks like there's a tip we couldn't read".
 
-Write tests for `reconcile` and for `toBill` (quantity expansion, printed tip becomes an amount tip, no tip becomes a zero amount tip, fees default to proportional, currency carried through).
+These compare sums, so they miss a read that moves prices between rows but keeps the sum, for example an unpriced line given the next row's price with every later price shifted up. A fourth check catches that: the **row check** (`rowCheck.ts`), run once by `parseReceipt.ts` on the model's read. Each item's price must be printed on a row in `rows` that names it, or on the rows just below it that belong to it (a price line with no words, a priced modifier whose words are in the item's name, a note with no price); a parent plus its modifiers may add up, and a unit price times the quantity counts. The prices come from the row text itself, so a price cannot silently move to another row's name. Items that no row names are skipped. When any item fails, the final receipt gets one warning naming them all: `Prices may be on the wrong lines. These items don't match the price printed on their own line on the receipt: "<name>", .... Check them against the receipt.` The review screen shows it with the other warnings.
+
+Write tests for `reconcile`, for the row check (including a recorded row-shifted read that it must flag), and for `toBill` (quantity expansion, printed tip becomes an amount tip, no tip becomes a zero amount tip, fees default to proportional, currency carried through).
 
 ### 7.6 Image prep
 

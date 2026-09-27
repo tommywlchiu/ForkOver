@@ -6,6 +6,7 @@ export const sampleReceipt: ParsedReceipt = {
   isReceipt: true,
   merchantName: 'Izakaya Test',
   currency: 'USD',
+  rows: ['2 Draft Beer 17.00', 'Katsu 18.95'],
   items: [
     { name: 'Draft Beer', quantity: 2, lineTotalCents: 1700 },
     { name: 'Katsu', quantity: 1, lineTotalCents: 1895 },
@@ -24,6 +25,7 @@ export const notAReceipt: ParsedReceipt = {
   isReceipt: false,
   merchantName: null,
   currency: '',
+  rows: [],
   items: [],
   discountCents: 0,
   taxCents: 0,
