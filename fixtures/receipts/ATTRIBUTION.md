@@ -25,3 +25,15 @@ The `.expected.json` answer files are this project's own transcriptions, not par
 | `otaru-masazushi-jpy-long.jpg` | Shinichi Haramizu (via Flickr) | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:%E3%81%8A%E4%BC%9A%E8%A8%88_%E6%98%8E%E7%B4%B0_(5043895266).jpg) | none |
 | `maze-london-gbp-service-charge.jpg` | William J Sisti (via Flickr) | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:We_spent_what%3F%3F_(9532631438).jpg) | none |
 | `ho-yin-seafood-hkd-service-charge.jpg` | Yatchwicma Plusamisl | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:HK_%E8%AA%BF%E6%99%AF%E5%B6%BA_Tiu_Keng_Leng_%E9%83%BD%E6%9C%83%E9%A7%85_Metro_Town_Shopping_Mall_shop_%E8%B1%AA%E5%AE%B4%E6%B5%B7%E9%AE%AE%E9%85%92%E5%AE%B6_Ho_Yin_Seafood_Restaurant_printed_paper_document_October_2021_SS2_payment_bill_n_total_amount_with_service_tips_ten_percent.jpg) | none |
+
+## The repository owner's own photos
+
+These three are phone photos taken by the repository owner, added to the public set with permission and
+no third-party license. Changes: resized so the long edge is at most 1568 px, re-encoded as JPEG at
+quality 0.85, stripped of metadata, and solid black boxes drawn over personal or payment data.
+
+| File | Covered |
+|---|---|
+| `target-fremont-crumpled.jpg` | Card last-4, AID, auth code, REC# line |
+| `chipotle-fremont-takeout-modifier.jpg` | Feedback unique code, QR code |
+| `dennys-fremont-gratuity.jpg` | Card last-4, auth code, AID |

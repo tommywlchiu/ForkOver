@@ -1,0 +1,20 @@
+{
+  "currency": "USD",
+  "items": [
+    { "name": "Brightroom", "quantity": 1, "lineTotalCents": 1200 },
+    { "name": "ThrshldMcGee", "quantity": 1, "lineTotalCents": 2500 },
+    { "name": "Amrcn Grtngs", "quantity": 1, "lineTotalCents": 649 },
+    { "name": "COPY PAPER", "quantity": 1, "lineTotalCents": 539 },
+    { "name": "U Brands", "quantity": 1, "lineTotalCents": 799 },
+    { "name": "SHT PRTECTOR", "quantity": 1, "lineTotalCents": 529 },
+    { "name": "ASTROBRIGHTS", "quantity": 1, "lineTotalCents": 559 }
+  ],
+  "discountCents": 0,
+  "taxCents": 694,
+  "fees": [],
+  "printedTipCents": null,
+  "printedSubtotalCents": 6775,
+  "printedTotalCents": 7469,
+  "kinds": ["crumpled"],
+  "notes": "Captain's own phone photo; the answers are a draft pending human check. A thumb covers part of the lower text. The ASTROBRIGHTS price is partly cut off (reads $5.5?); 559 is derived from the printed subtotal 67.75 minus the other six lines (62.16). The 'Regular Price' lines under COPY PAPER and SHT PRTECTOR are informational, not items or discounts: the listed prices are already the sale prices (the receipt's 'TOTAL SAVINGS THIS TRIP $1.20' matches the two 0.60 differences), so discountCents is 0. Card digits, AID, auth code, and the REC# line are covered."
+}
