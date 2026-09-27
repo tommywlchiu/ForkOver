@@ -81,6 +81,7 @@ export function parseExpectedFile(value: unknown): { ok: true; file: ExpectedFil
   const validation = validateReceipt({
     isReceipt: true,
     merchantName: null,
+    rows: [],
     tipSource: null,
     warnings: [],
     ...Object.fromEntries(EXPECTED_KEYS.map((key) => [key, record[key]])),

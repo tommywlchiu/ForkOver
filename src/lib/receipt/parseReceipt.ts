@@ -7,6 +7,7 @@
  */
 import { streamReceiptText, UpstreamError, type AnthropicConfig, type ImageMediaType, type Usage } from './anthropic.ts';
 import { createItemStreamParser } from './partialJson.ts';
+import { flagMisplacedPrices } from './rowCheck.ts';
 import { validateLineItem, validateReceipt, type ParsedLineItem, type ParsedReceipt } from './schema.ts';
 
 /** SPEC 7.2. */
@@ -82,7 +83,7 @@ export async function* parseReceiptImage(
     yield { type: 'error', code: 'NOT_A_RECEIPT' };
     return;
   }
-  yield { type: 'done', receipt: dropUnpricedItems(result.receipt), usage: end.usage };
+  yield { type: 'done', receipt: flagMisplacedPrices(dropUnpricedItems(result.receipt)), usage: end.usage };
 }
 
 /**

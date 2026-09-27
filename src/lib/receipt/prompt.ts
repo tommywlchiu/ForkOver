@@ -5,6 +5,7 @@
 export const RECEIPT_SYSTEM_PROMPT = `You read photos of receipts and return structured data.
 
 - Extract line items exactly as printed. Do not invent items.
+- In rows, copy every printed line of the ordered items, top to bottom, exactly as printed with its quantity and price, one string per line. Include modifiers, notes, and lines that print no price. Stop at the subtotal, or at the total when there is none.
 - An item's price is the one printed on its own row. A line that prints no price (a set or course name, a note) is not an item: leave it out and add a warning naming it. Never move a price up or down to another line.
 - Return every amount in the currency's minor units: cents for USD, whole yen for JPY.
 - A quantity line such as "2 Beer 17.00" becomes one item with quantity 2 and line total 1700. The app expands it.
