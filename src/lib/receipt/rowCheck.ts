@@ -105,7 +105,8 @@ export function rowAmounts(row: string, exponent: number): { all: number[]; last
  * The item passes when its line total is an amount printed in that run, a unit
  * price there times its quantity, or the running sum of the run's rightmost
  * amounts (a parent plus its modifiers). An item that no row names (a renamed
- * or merged line) cannot be checked and is skipped.
+ * or merged line, or a read whose rows are empty or short) cannot be checked,
+ * so it fails too.
  */
 export function findMisplacedPrices(receipt: Pick<ParsedReceipt, 'currency' | 'rows' | 'items'>): string[] {
   const exponent = currencyExponent(receipt.currency);
