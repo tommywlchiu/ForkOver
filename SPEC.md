@@ -69,7 +69,7 @@ The latency budget from the PRD, measured from shutter press:
 2. **Consent (first scan only)**: a sheet saying the receipt photo is sent to Anthropic's Claude AI to read the items, with "Allow" and "Enter manually instead". Nothing pre-selected. Stored on the profile (`ai_consent_at`), changeable in Settings, and enforced by the server (NFR-4).
 3. **Scan**: camera with a large shutter button and a photo library option. The shutter press starts the latency clock (section 8.8). Upload and parse start immediately.
 4. **Review**: items stream in as the AI reads them. Each item is editable (name, price), deletable, and new items can be added (FR-3). Quantity lines arrive already split into units, with a "Merge" action to undo (FR-2). Below the items: discount, tax, fees (each with a proportional or even toggle, FR-29), and tip (FR-11).
-   - A green check appears when items match the printed subtotal. A warning banner appears when they don't, showing both numbers (section 7.5).
+   - A green check appears when items, or items plus fees, match the printed subtotal. A warning banner appears when they don't, showing both numbers (section 7.5).
    - If the receipt has a tip, it shows with its source ("Printed tip" or "Handwritten tip"). If not, the tip row reads "No tip" with chips for 18%, 20%, 22%, and custom (section 13, default 10).
    - If the "tip we couldn't read" check fires (section 7.5), show "Looks like there's a tip we couldn't read" next to the tip row.
    - One primary button: "Looks right". It opens the bill (status `open`) and goes to Share.
