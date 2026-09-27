@@ -6,13 +6,14 @@ answer, and prints a comparison table you use to set the accuracy target and pic
 
 ## Real licensed set
 
-12 real receipt photos from Wikimedia Commons and Flickr, under CC0, CC BY, or CC BY-SA, are
+12 real receipt photos from Wikimedia Commons and Flickr, under CC0, CC BY, or CC BY-SA, plus 3 of
+the repository owner's own phone photos (Target, Chipotle, Denny's; card data covered), are
 committed here. `ATTRIBUTION.md` lists each file's author, license, source, and changes (all are
 resized, and card digits are covered on two). Their `.expected.json` files carry a `notes` field
 saying so; the answers are drafts until a human has checked them against the photos.
 
 Between them they cover `long`, `crumpled`, `auto-gratuity`, `surcharge`, `quantity-line`, and
-`non-usd` (three JPY, plus EUR, GBP, and HKD). **No licensed photo covers `handwritten-tip` or
+`non-usd` (three JPY, plus EUR, GBP, and HKD). **No real photo covers `handwritten-tip` or
 `discount`; those still need the captain's own photos** before the real set meets SPEC 7.7.
 
 Tax-inclusive receipts (JPY, EUR, GBP) record `taxCents: 0`, since the printed tax is already in

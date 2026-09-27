@@ -1,0 +1,16 @@
+{
+  "currency": "USD",
+  "items": [
+    { "name": "Super Slam Trio", "quantity": 1, "lineTotalCents": 1399 },
+    { "name": "$$ 1 Egg", "quantity": 1, "lineTotalCents": 199 },
+    { "name": "$$ 1 Egg", "quantity": 1, "lineTotalCents": 199 }
+  ],
+  "discountCents": 0,
+  "taxCents": 184,
+  "fees": [],
+  "printedTipCents": 357,
+  "printedSubtotalCents": 1797,
+  "printedTotalCents": 2338,
+  "kinds": ["crumpled", "auto-gratuity"],
+  "notes": "Captain's own phone photo; the answers are a draft pending human check. The zero-price Sprite line is left out. The two identical '$$ 1 Egg' lines are kept as printed (two quantity-1 lines, not one quantity-2 line). The printed 'Gratuity' line is a tip. Card digits, auth code, and AID are covered."
+}

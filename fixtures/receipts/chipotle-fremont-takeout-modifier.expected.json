@@ -1,0 +1,14 @@
+{
+  "currency": "USD",
+  "items": [
+    { "name": "Chicken Bowl", "quantity": 1, "lineTotalCents": 1430 }
+  ],
+  "discountCents": 0,
+  "taxCents": 116,
+  "fees": [],
+  "printedTipCents": null,
+  "printedSubtotalCents": 1430,
+  "printedTotalCents": 1546,
+  "kinds": [],
+  "notes": "Captain's own phone photo; the answers are a draft pending human check. Chicken Bowl 11.35 plus the priced Guacamole modifier 2.95 folds into one 14.30 line. The feedback unique code and QR code are covered."
+}
