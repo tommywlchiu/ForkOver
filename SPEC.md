@@ -356,7 +356,7 @@ type ParsedReceipt = {
 
 Three checks, all shown on the review screen, none blocking:
 
-1. **Subtotal (FR-3):** sum of items vs `printedSubtotalCents`. Match shows a green check; a mismatch shows "Items add up to $X, receipt says $Y".
+1. **Subtotal (FR-3):** sum of items vs `printedSubtotalCents`, matching either as items alone or as items plus fees (some receipts print a subtotal that already folds in a fee, such as a table charge). Match shows a green check; a mismatch shows "Items add up to $X, receipt says $Y".
 2. **Total:** items - discount + tax + (tip ?? 0) + fees vs `printedTotalCents`, with the same style of message.
 3. **Unreadable tip (section 13, default 9):** if no tip was read and `printedTotalCents` exceeds items - discount + tax + fees, show "Looks like there's a tip we couldn't read".
 
