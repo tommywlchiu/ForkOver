@@ -258,10 +258,22 @@ describe('findMisplacedPrices', () => {
     expect(findMisplacedPrices(receiptWith('JPY', rows, items))).toEqual(['沖縄ちゃんぽん']);
   });
 
-  it('skips items that no row names, and checks nothing without rows', () => {
+  it('flags every item when the read has no rows', () => {
+    expect(findMisplacedPrices(receiptWith('JPY', [], otaruCorrect))).toEqual(otaruCorrect.map((i) => i.name));
+  });
+
+  it('flags an item that no row names, because its price cannot be checked', () => {
     const rows = ['CHX SALAD 5.49'];
-    expect(findMisplacedPrices(receiptWith('USD', rows, [item('Chicken Salad', 999)]))).toEqual([]);
-    expect(findMisplacedPrices(receiptWith('JPY', [], otaruShifted))).toEqual([]);
+    expect(findMisplacedPrices(receiptWith('USD', rows, [item('Chicken Salad', 549)]))).toEqual(['Chicken Salad']);
+  });
+
+  it('flags an item whose row is missing from a short rows list', () => {
+    expect(findMisplacedPrices(receiptWith('JPY', otaruRows.slice(0, -1), otaruCorrect))).toEqual(['さば']);
+  });
+
+  it('flags merged names, as at the bottom of the otaru read', () => {
+    const merged = [...otaruCorrect.slice(0, -2), item('さば こはだ', 500)];
+    expect(findMisplacedPrices(receiptWith('JPY', otaruRows, merged))).toEqual(['さば こはだ']);
   });
 
   it('accepts an item named on several rows when any of them prints its price', () => {
@@ -282,7 +294,7 @@ describe('flagMisplacedPrices', () => {
       ...receipt,
       warnings: [
         'Thumb covers part of the receipt',
-        'Prices may be on the wrong lines. These items don\'t match the price printed on their own line on the receipt: "お好みF", "朝獲れ大ボタン", "軍艦海水うに". Check them against the receipt.',
+        'Prices may be on the wrong lines. These items don\'t match the price printed on their own line on the receipt, or no line on the receipt matches them: "お好みF", "朝獲れ大ボタン", "軍艦海水うに". Check them against the receipt.',
       ],
     });
   });

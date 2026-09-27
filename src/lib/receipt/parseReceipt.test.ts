@@ -167,7 +167,7 @@ describe('parseReceiptImage', () => {
       receipt: {
         items: shifted.items,
         warnings: [
-          'Prices may be on the wrong lines. These items don\'t match the price printed on their own line on the receipt: "Omakase F". Check them against the receipt.',
+          'Prices may be on the wrong lines. These items don\'t match the price printed on their own line on the receipt, or no line on the receipt matches them: "Omakase F". Check them against the receipt.',
         ],
       },
     });

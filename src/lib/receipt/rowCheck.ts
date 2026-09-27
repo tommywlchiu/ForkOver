@@ -133,7 +133,7 @@ export function findMisplacedPrices(receipt: Pick<ParsedReceipt, 'currency' | 'r
     const anchors = rowKeys.flatMap((row, at) =>
       rowNames(row, name) || nameStartsWith(name, labels[at]) ? [at] : [],
     );
-    if (anchors.length > 0 && !anchors.some((at) => priceFits(at, name, item.lineTotalCents, item.quantity))) {
+    if (!anchors.some((at) => priceFits(at, name, item.lineTotalCents, item.quantity))) {
       misplaced.push(item.name);
     }
   });
@@ -149,7 +149,7 @@ export function flagMisplacedPrices(receipt: ParsedReceipt): ParsedReceipt {
     ...receipt,
     warnings: [
       ...receipt.warnings,
-      `Prices may be on the wrong lines. These items don't match the price printed on their own line on the receipt: ${names}. Check them against the receipt.`,
+      `Prices may be on the wrong lines. These items don't match the price printed on their own line on the receipt, or no line on the receipt matches them: ${names}. Check them against the receipt.`,
     ],
   };
 }
