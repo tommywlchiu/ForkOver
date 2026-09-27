@@ -23,7 +23,7 @@ export type AmountCheck =
   | { status: 'unknown'; computedCents: number; printedCents: null };
 
 export type Reconciliation = {
-  /** Items against the printed subtotal (FR-3). */
+  /** Items, or items plus fees, against the printed subtotal (FR-3). */
   subtotal: AmountCheck;
   /** Items - discount + tax + tip + fees against the printed total. */
   total: AmountCheck;
@@ -40,6 +40,21 @@ const compare = (computedCents: number, printedCents: number | null): AmountChec
   };
 };
 
+/**
+ * Some receipts print a subtotal that already folds in a fee (for example a
+ * table charge), so items alone never equal it. A match against items plus
+ * fees is still a match; only when neither form equals the printed subtotal
+ * do we report the items-only mismatch.
+ */
+const compareSubtotal = (itemsCents: number, feesCents: number, printedCents: number | null): AmountCheck => {
+  if (printedCents === null) return { status: 'unknown', computedCents: itemsCents, printedCents };
+  if (itemsCents === printedCents) return { status: 'match', computedCents: itemsCents, printedCents };
+  if (itemsCents + feesCents === printedCents) {
+    return { status: 'match', computedCents: itemsCents + feesCents, printedCents };
+  }
+  return { status: 'mismatch', computedCents: itemsCents, printedCents };
+};
+
 export function reconcile(input: ReconcileInput): Reconciliation {
   const { itemsCents, discountCents, taxCents, feesCents, tipCents, printedTotalCents } = input;
   const withoutTip = itemsCents - discountCents + taxCents + feesCents;
@@ -48,7 +63,7 @@ export function reconcile(input: ReconcileInput): Reconciliation {
   const noTipRead = tipCents === null || tipCents === 0;
 
   return {
-    subtotal: compare(itemsCents, input.printedSubtotalCents),
+    subtotal: compareSubtotal(itemsCents, feesCents, input.printedSubtotalCents),
     total: compare(withoutTip + (tipCents ?? 0), printedTotalCents),
     unreadableTip: noTipRead && printedTotalCents !== null && printedTotalCents > withoutTip,
   };

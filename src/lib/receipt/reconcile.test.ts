@@ -33,6 +33,21 @@ describe('reconcile: subtotal check', () => {
       printedCents: null,
     });
   });
+
+  it('matches when items plus fees equal a printed subtotal that already includes a fee (ryukyu-no-ushi-yakiniku-jpy)', () => {
+    // ¥15,356 items + ¥770 table charge (fee) = ¥16,126 printed subtotal.
+    expect(
+      reconcile(input({ itemsCents: 15356, feesCents: 770, printedSubtotalCents: 16126 })).subtotal,
+    ).toEqual({ status: 'match', computedCents: 16126, printedCents: 16126 });
+  });
+
+  it('stays a mismatch when the extra amount does not equal the fees', () => {
+    expect(reconcile(input({ itemsCents: 15356, feesCents: 770, printedSubtotalCents: 16200 })).subtotal).toEqual({
+      status: 'mismatch',
+      computedCents: 15356,
+      printedCents: 16200,
+    });
+  });
 });
 
 describe('reconcile: total check', () => {
