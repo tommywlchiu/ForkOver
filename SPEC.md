@@ -370,7 +370,7 @@ Put at least 12 real receipt photos in `fixtures/receipts/` with a hand-written 
 
 `scripts/eval-receipts.ts` runs each fixture through the Edge Function logic and reports, per receipt and in aggregate:
 
-- whether every item and price matched, and item count match
+- whether every item and price matched (names strict), whether item prices matched (names ignored), and item count match; plus "Money right", everything right except item names
 - subtotal, tax, tip, and total match
 - currency match
 - time to first item and time to done (median and 90th percentile)

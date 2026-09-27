@@ -98,6 +98,24 @@ describe('scoreReceipt', () => {
   it('scores a different currency', () => {
     expect(scoreReceipt({ ...sampleReceipt, currency: 'JPY' }, expected).currencyMatch).toBe(false);
   });
+
+  it('passes price-only checks on a name-only difference but fails the strict one', () => {
+    const items = sampleReceipt.items.map((i) => ({ ...i, name: `${i.name} (2 @1.89)` }));
+    const score = scoreReceipt({ ...sampleReceipt, items }, expected);
+    expect(score).toMatchObject({ itemsMatch: false, itemPricesMatch: true, moneyMatch: true, allMatch: false });
+  });
+
+  it('fails both item checks when prices are swapped between items', () => {
+    const [a, b] = sampleReceipt.items;
+    const items = [{ ...a, lineTotalCents: b.lineTotalCents }, { ...b, lineTotalCents: a.lineTotalCents }];
+    const score = scoreReceipt({ ...sampleReceipt, items }, expected);
+    expect(score).toMatchObject({ itemsMatch: false, itemPricesMatch: false, moneyMatch: false });
+  });
+
+  it('keeps money fields in Money right', () => {
+    const score = scoreReceipt({ ...sampleReceipt, taxCents: 301 }, expected);
+    expect(score).toMatchObject({ itemPricesMatch: true, moneyMatch: false });
+  });
 });
 
 it('expected keys are all fields of a parsed receipt', () => {
