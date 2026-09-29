@@ -53,6 +53,17 @@ export function nameStartsWith(name: string, label: string): boolean {
   return !(ENDS_SPACED.test(label) && STARTS_SPACED.test(name.slice(label.length)));
 }
 
+/**
+ * True when a row's own printed layout marks it as subordinate to the row
+ * above: indented, or led by "+". A fold (SPEC 7.4) can rename the parent
+ * item without folding the modifier's words into it (an item can just stay
+ * "Chicken Bowl" over an indented "Guacamole" row), so the row check cannot
+ * rely on name matching alone to tell a modifier's row from another item's.
+ */
+export function isSubordinateRow(row: string): boolean {
+  return /^[ \t]|^\+/.test(row);
+}
+
 const NUMBER = /\d+(?:[.,']\d+)*/g;
 
 /**
@@ -98,9 +109,11 @@ export function rowAmounts(row: string, exponent: number): { all: number[]; last
  * begin it (the parent row of an item whose name folds in its modifiers). Each
  * is checked together with the rows just below it that belong to the same item:
  * a price line with no words (the second line of a two-line item), a priced
- * modifier whose words are in the item's name, or a note with no price. A row
- * that names another item, or any other priced row, ends the run, so an
- * unpriced row can never borrow the price of the item below it.
+ * modifier whose words are in the item's name, a note with no price, or a row
+ * that is itself printed as subordinate (indented, or led by "+") even when
+ * its words never made it into the item's name. A row that names another
+ * item ends the run regardless, so an unpriced or subordinate-looking row can
+ * never borrow the price of an unrelated item below it.
  *
  * The item passes when its line total is an amount printed in that run, a unit
  * price there times its quantity, or the running sum of the run's rightmost
@@ -119,7 +132,11 @@ export function findMisplacedPrices(receipt: Pick<ParsedReceipt, 'currency' | 'r
   const priceFits = (anchor: number, name: string, lineTotal: number, quantity: number): boolean => {
     let runningSum = 0;
     for (let row = anchor; row < rowKeys.length; row++) {
-      const belongs = labels[row] === '' || rowNames(name, labels[row]) || amounts[row].all.length === 0;
+      const belongs =
+        labels[row] === '' ||
+        rowNames(name, labels[row]) ||
+        amounts[row].all.length === 0 ||
+        isSubordinateRow(receipt.rows[row]);
       if (row > anchor && (namesAnItem[row] || !belongs)) break;
       if (amounts[row].all.some((amount) => amount === lineTotal || amount * quantity === lineTotal)) return true;
       runningSum += amounts[row].last ?? 0;
