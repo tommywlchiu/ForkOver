@@ -18,7 +18,7 @@ Early development. The app UI is a single placeholder screen for now.
 | Milestone | State |
 | --- | --- |
 | **M1** Pure logic: split, claims, balance, money, Venmo links | Done |
-| **M2** Receipt parsing: structured output schema, streaming `parse-receipt` function, reconciliation, model eval | Built. Model chosen at the checkpoint: Sonnet 5 (`ANTHROPIC_MODEL=claude-sonnet-5`), from an eval on 12 real and 10 synthetic receipts |
+| **M2** Receipt parsing: structured output schema, streaming `parse-receipt` function, reconciliation, model eval | Built. Model chosen from an eval on 12 real and 10 synthetic receipts: Sonnet 5 (`ANTHROPIC_MODEL=claude-sonnet-5`) |
 | **M3** Payer app on one phone | Not started |
 | **M4** Shared bills (realtime, web claim page, guests) | Not started |
 | **M5** Payer controls (assignment, paid marks, balances, closing) | Not started |
@@ -78,7 +78,7 @@ npx supabase functions serve --env-file supabase/functions/.env.local
 ### Receipt eval
 
 The eval runs each fixture through the parser with each model and prints an accuracy, latency, and
-cost comparison. Try it with no API key and no spend first (stub accuracy numbers are meaningless):
+cost comparison. Try the no-spend, no-API-key stub run first (its accuracy numbers are meaningless):
 
 ```sh
 npm run eval:receipts -- --stub
