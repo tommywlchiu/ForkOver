@@ -18,7 +18,7 @@ Early development. The app UI is a single placeholder screen for now.
 | Milestone | State |
 | --- | --- |
 | **M1** Pure logic: split, claims, balance, money, Venmo links | Done |
-| **M2** Receipt parsing: structured output schema, streaming `parse-receipt` function, reconciliation, model eval | Built. Model chosen from an eval on 12 real and 10 synthetic receipts: Sonnet 5 (`ANTHROPIC_MODEL=claude-sonnet-5`) |
+| **M2** Receipt parsing: structured output schema, streaming `parse-receipt` function, reconciliation, model eval | Done. Signed off 2026-09-27: Sonnet 5 read 10 of 15 real receipts fully right, every total right, and every genuine misread was flagged by the review checks. See [`SPEC.md` section 11](SPEC.md#11-milestones) for detail |
 | **M3** Payer app on one phone | Not started |
 | **M4** Shared bills (realtime, web claim page, guests) | Not started |
 | **M5** Payer controls (assignment, paid marks, balances, closing) | Not started |
