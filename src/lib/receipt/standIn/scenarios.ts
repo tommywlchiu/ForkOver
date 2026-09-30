@@ -2,7 +2,7 @@
  * Canned `ParsedReceipt` results the stand-in reader replays (SPEC.md section
  * 11, M3). No live network call or API key needed to exercise Scan/Review.
  */
-import type { ParsedReceipt } from '../schema';
+import type { ParsedReceipt } from '../schema.ts';
 
 /**
  * The realistic-receipt scenario from split.test.ts ("allocates tax and a

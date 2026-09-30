@@ -6,8 +6,8 @@
  * so the review screen's "items stream in" behavior can be exercised with no
  * network call and no API key (SPEC.md section 11, M3).
  */
-import type { ParseEvent } from '../parseReceipt';
-import type { ParsedReceipt } from '../schema';
+import type { ParseEvent } from '../parseReceipt.ts';
+import type { ParsedReceipt } from '../schema.ts';
 
 export type StandInDelays = {
   /** Delay before each item event, simulating the model reading one line at a time. */
