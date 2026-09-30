@@ -80,7 +80,7 @@ export interface BillStore {
 type StoredFeeResult = Fee;
 
 /** Expands a parsed line into unit items (SPEC 6.5, FR-2), assigning fresh ids. */
-function expandLineToItems(line: ParsedLineItem): Array<{ name: string; priceCents: number }> {
+function expandLineToItems(line: ParsedLineItem): { name: string; priceCents: number }[] {
   return allocate(line.lineTotalCents, Array<number>(line.quantity).fill(1)).map((priceCents) => ({
     name: line.name,
     priceCents,

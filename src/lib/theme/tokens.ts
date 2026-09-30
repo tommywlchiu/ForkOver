@@ -71,7 +71,7 @@ export const claimStateMeta: Record<ClaimStateName, { label: string; icon: strin
 };
 
 /** Every (foreground, background) pair contrast.test.ts must check, per theme. */
-export function contrastPairs(theme: ThemeTokens): Array<[foreground: string, background: string, label: string]> {
+export function contrastPairs(theme: ThemeTokens): [foreground: string, background: string, label: string][] {
   return [
     [theme.text, theme.background, 'text on background'],
     [theme.textMuted, theme.background, 'textMuted on background'],
