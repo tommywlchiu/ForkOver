@@ -10,6 +10,7 @@ import { resolveClaims, type ClaimMode, type ResolvedItem } from '../lib/claims/
 import { calculateSplit, type Fee, type Person, type SplitResult, type Tip } from '../lib/split/split';
 import type { TipSource } from '../lib/receipt/schema';
 import { analytics } from './analytics';
+import { useSessionStore } from './session';
 
 const dataStore = createLocalBillStore();
 
@@ -85,6 +86,9 @@ export const useBillStore = create<BillState>((set, get) => {
             dataStore.finalizeScan(billId, event.receipt);
             refresh(billId);
             analytics.record('parse_done', { itemCount: event.receipt.items.length });
+            // Counts against the free-tier quota only on a successful scan (SPEC 7.1 step 5);
+            // manual entry (startManualEntry) never reaches this branch, so it never counts.
+            useSessionStore.getState().recordScanUsed();
           }
         }
       } catch {

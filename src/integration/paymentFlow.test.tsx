@@ -10,6 +10,7 @@
  */
 import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library';
 import { useBillStore } from '../state/bill';
+import { useSessionStore } from '../state/session';
 
 jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
@@ -74,6 +75,8 @@ describe('payer flow: scan to claimed totals', () => {
     await waitFor(() => expect(screen.getByText('Sakura Izakaya')).toBeTruthy());
     const billId = currentBillId();
     await waitFor(() => expect(useBillStore.getState().bills[billId].scanState).toBe('done'));
+    // A successful scan counts against the free-tier quota (SPEC 7.1 step 5).
+    expect(useSessionStore.getState().scansUsedThisMonth).toBe(1);
 
     expect(screen.getByDisplayValue('Ramen')).toBeTruthy();
     expect(screen.getByDisplayValue('Katsu')).toBeTruthy();
