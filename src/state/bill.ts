@@ -29,7 +29,7 @@ export type BillState = {
   setDiscount: (billId: string, cents: number) => void;
   setTax: (billId: string, cents: number) => void;
   addFee: (billId: string, fee: { label: string; cents: number; split: Fee['split'] }) => void;
-  setFeeSplit: (billId: string, feeId: string, split: Fee['split']) => void;
+  updateFee: (billId: string, feeId: string, patch: Partial<Pick<Fee, 'label' | 'cents' | 'split'>>) => void;
   removeFee: (billId: string, feeId: string) => void;
   setTip: (billId: string, tip: Tip, source: TipSource | null) => void;
 
@@ -145,8 +145,8 @@ export const useBillStore = create<BillState>((set, get) => {
       dataStore.addFee(billId, fee);
       refresh(billId);
     },
-    setFeeSplit: (billId, feeId, split) => {
-      dataStore.updateFee(billId, feeId, { split });
+    updateFee: (billId, feeId, patch) => {
+      dataStore.updateFee(billId, feeId, patch);
       refresh(billId);
     },
     removeFee: (billId, feeId) => {

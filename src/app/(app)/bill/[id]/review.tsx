@@ -30,7 +30,7 @@ export default function Review() {
   const setDiscount = useBillStore((s) => s.setDiscount);
   const setTax = useBillStore((s) => s.setTax);
   const addFee = useBillStore((s) => s.addFee);
-  const setFeeSplit = useBillStore((s) => s.setFeeSplit);
+  const updateFee = useBillStore((s) => s.updateFee);
   const removeFee = useBillStore((s) => s.removeFee);
   const setTip = useBillStore((s) => s.setTip);
   const confirmReview = useBillStore((s) => s.confirmReview);
@@ -132,6 +132,7 @@ export default function Review() {
               style={[styles.itemNameInput, { color: theme.text }]}
             />
             <TextInput
+              key={`price-${item.priceCents}`}
               testID={`item-price-${item.id}`}
               defaultValue={(item.priceCents / 100).toFixed(2)}
               onEndEditing={(e) => {
@@ -240,6 +241,7 @@ export default function Review() {
       <View style={styles.row}>
         <Text style={{ color: theme.textMuted, width: 80 }}>Discount</Text>
         <TextInput
+          key={`discount-${bill.discountCents}`}
           testID="discount-input"
           defaultValue={(bill.discountCents / 100).toFixed(2)}
           onEndEditing={(e) => {
@@ -254,6 +256,7 @@ export default function Review() {
       <View style={styles.row}>
         <Text style={{ color: theme.textMuted, width: 80 }}>Tax</Text>
         <TextInput
+          key={`tax-${bill.taxCents}`}
           testID="tax-input"
           defaultValue={(bill.taxCents / 100).toFixed(2)}
           onEndEditing={(e) => {
@@ -269,14 +272,30 @@ export default function Review() {
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Fees</Text>
       {bill.fees.map((fee: Fee) => (
         <View key={fee.id} style={styles.row}>
-          <Text style={{ color: theme.text, flex: 1 }} testID={`fee-label-${fee.id}`}>
-            {fee.label} ({formatMoney(fee.cents, currency, 'en-US')})
-          </Text>
+          <TextInput
+            testID={`fee-label-${fee.id}`}
+            value={fee.label}
+            onChangeText={(text) => updateFee(bill.id, fee.id, { label: text })}
+            accessibilityLabel={`Fee label: ${fee.label}`}
+            style={[styles.itemNameInput, { color: theme.text }]}
+          />
+          <TextInput
+            key={`fee-amount-${fee.cents}`}
+            testID={`fee-amount-${fee.id}`}
+            defaultValue={(fee.cents / 100).toFixed(2)}
+            onEndEditing={(e) => {
+              const cents = parseMoneyInput(e.nativeEvent.text, currency);
+              if (cents !== null) updateFee(bill.id, fee.id, { cents });
+            }}
+            keyboardType="decimal-pad"
+            accessibilityLabel={`Fee amount: ${formatMoney(fee.cents, currency, 'en-US')}`}
+            style={[styles.itemPriceInput, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}
+          />
           <Chip
             testID={`fee-split-toggle-${fee.id}`}
             label={fee.split === 'proportional' ? 'Proportional' : 'Even'}
             selected={fee.split === 'equal'}
-            onPress={() => setFeeSplit(bill.id, fee.id, fee.split === 'proportional' ? 'equal' : 'proportional')}
+            onPress={() => updateFee(bill.id, fee.id, { split: fee.split === 'proportional' ? 'equal' : 'proportional' })}
           />
           <Text
             testID={`remove-fee-${fee.id}`}
