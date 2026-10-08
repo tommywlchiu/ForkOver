@@ -2,6 +2,10 @@
 firstmate/
 backpass/
 
+# crew (.claude/firstmate.md): the first mate's local ledger and the workers' worktrees
+.crew/
+.claude/worktrees/
+
 # dependencies
 node_modules/
 

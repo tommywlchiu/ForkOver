@@ -83,6 +83,13 @@ npm run measure:scan-latency # median shutter-to-sent over N stand-in runs (SPEC
 - Cost figures come from `src/lib/receipt/eval/pricing.ts`. Update it when prices or the eval models change.
 - `ANTHROPIC_API_KEY` is read from the environment only. Never print, log, or write it.
 
+## How changes land
+
+- Work is dispatched by the first mate (`.claude/firstmate.md`). Each change is made in its own git
+  worktree under `.claude/worktrees/`, on an `fm/<task>` branch, and lands as a squash-merged PR once
+  CI passes and the owner approves. Nobody commits to `master` directly.
+- A fresh worktree has no `node_modules`; run `npm ci` before anything else.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
