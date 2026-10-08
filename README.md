@@ -13,13 +13,15 @@ math, schema, milestones) is in [`SPEC.md`](SPEC.md).
 
 ## Status
 
-Early development. The app UI is a single placeholder screen for now.
+Early development. The payer screens (sign-in, scan, review, share, bill) run on one phone with local data,
+a stand-in sign-in, and a stand-in receipt reader; the Supabase backend, Apple/Google sign-in, and live
+parsing are not wired in yet.
 
 | Milestone | State |
 | --- | --- |
 | **M1** Pure logic: split, claims, balance, money, Venmo links | Done |
 | **M2** Receipt parsing: structured output schema, streaming `parse-receipt` function, reconciliation, model eval | Done. Signed off 2026-09-27: Sonnet 5 read 10 of 15 real receipts fully right, every total right, and every genuine misread was flagged by the review checks. See [`SPEC.md` section 11](SPEC.md#11-milestones) for detail |
-| **M3** Payer app on one phone | Not started |
+| **M3** Payer app on one phone | Screens built on local data with stand-ins; Supabase, real sign-in, and live parsing pending |
 | **M4** Shared bills (realtime, web claim page, guests) | Not started |
 | **M5** Payer controls (assignment, paid marks, balances, closing) | Not started |
 | **M6** Pro subscriptions and store launch | Not started |
@@ -37,8 +39,9 @@ Milestone detail is in [`SPEC.md` section 11](SPEC.md#11-milestones).
 ## Repo layout
 
 ```
-src/app/                    Expo Router routes (currently a placeholder screen)
+src/app/                    Expo Router routes: payer screens (auth, scan, review, share, bill)
 src/lib/                    Pure, tested logic: split, claims, balance, money, pay, receipt
+src/data/, src/state/       Local bill store, receipt reader seam, zustand stores used by screens
 supabase/functions/         Edge Functions (parse-receipt); thin wiring over src/lib
 fixtures/receipts/          Receipt eval fixtures (photos + expected JSON)
 scripts/eval-receipts.ts    Model comparison eval

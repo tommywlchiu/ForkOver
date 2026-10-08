@@ -11,6 +11,23 @@ section of SPEC.md before starting a milestone.
 Expo has changed. Read the exact versioned docs at https://docs.expo.dev/versions/v57.0.0/ before
 writing app code. Routes live under `src/app/`, not a top-level `app/`.
 
+## App architecture (payer app, M3+)
+
+- `src/data/localBillStore.ts` defines the `BillStore` interface and today's in-memory
+  implementation; `src/state/bill.ts` is the zustand store screens use, wrapping it and calling
+  `src/lib/claims` + `src/lib/split` for derived state. Swapping in Supabase later means replacing
+  the implementation behind `BillStore`, not the screens or the zustand store's shape.
+- `src/data/receiptReader.ts` is the one place a screen gets a receipt reader. It currently always
+  returns the stand-in reader (`src/lib/receipt/standIn/`), which replays a canned `ParsedReceipt`
+  (`scenarios.ts`) through the same event-stream shape `parseReceiptImage` will produce; wiring in
+  the real `parse-receipt` Edge Function is a one-function change in that file.
+- `src/state/session.ts` is a STAND-IN local session: `signIn()` fabricates a local user with no
+  network call. Real Apple/Google sign-in through Supabase Auth replaces this store's internals.
+- `REALISTIC_RECEIPT` in `src/lib/receipt/standIn/scenarios.ts` mirrors `split.test.ts`'s "realistic
+  receipt" worked example (payer a, b owes 3599, c owes 2253); claiming it the same way through the
+  Bill screen reproduces those exact totals, which is what `src/integration/paymentFlow.test.tsx`
+  and `scripts/measure-scan-latency.ts` both rely on.
+
 ## Working rules
 
 - Money is integer minor units everywhere except the final render. No floats in math.
@@ -30,10 +47,26 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
 ## Commands
 
 ```sh
-npm test          # jest-expo, scoped to src/
-npm run typecheck # tsc --noEmit
-npm run lint      # expo lint
+npm test                     # jest-expo, scoped to src/
+npm run typecheck            # tsc --noEmit
+npm run lint                 # expo lint
+npm run measure:scan-latency # median shutter-to-sent over N stand-in runs (SPEC 8.8)
 ```
+
+- `@testing-library/react-native` is pinned to `^13.3.3`, not 14+: expo-router 57's
+  `renderRouter`/testing-library helper (`expo-router/testing-library`) calls `jest.useFakeTimers()`
+  and expects the old synchronous `render`/`fireEvent`. RNTL 14 made both async internally, which
+  silently never resolves under those fake timers (`screen` queries throw "render function has not
+  been called" forever). `@react-native/jest-preset` must stay an explicit devDependency too;
+  jest-expo's preset requires it directly rather than finding it transitively.
+- Every `fireEvent.*` call in RNTL 13 is still synchronous; component/integration tests use
+  `expo-router/testing-library`'s `renderRouter` + `screen`/`fireEvent`/`waitFor`, driving screens by
+  the `testID`s above (see `src/integration/paymentFlow.test.tsx`).
+- This sandbox's `chrome-devtools-axi` cannot launch a browser (missing system libraries, e.g.
+  `libnspr4.so`, the same gap `expo start`'s react-native-devtools install warns about) and there are
+  no iOS/Android simulators here either. If both are still true, verify screens with `npm test` and
+  `expo start --web` output instead of screenshots, and say so plainly rather than claiming
+  screenshots that don't exist.
 
 ## Edge Functions
 
@@ -45,7 +78,7 @@ npm run lint      # expo lint
 ## Receipt eval
 
 - `npm run eval:receipts -- --stub` runs the eval pipeline with no API key. Live runs, fixture format, and the scoring rules are in `fixtures/receipts/README.md`; the code is `scripts/eval-receipts.ts` and `src/lib/receipt/eval/`.
-- The script runs under Node's `--experimental-transform-types`, so everything it imports must use explicit `.ts` import extensions and no `enum`s. Files that import extensionlessly (`reconcile`, `toBill`) cannot be used from it.
+- The script (and `scripts/measure-scan-latency.ts`) runs under Node's `--experimental-transform-types`, so everything it imports must use explicit `.ts` import extensions and no `enum`s. Files that import extensionlessly (`reconcile`, `toBill`) cannot be used from either.
 - Committed receipt photos must be licensed for public use and listed in `fixtures/receipts/ATTRIBUTION.md`. Anything else goes in the git-ignored `fixtures/receipts-local/` (run with `--dir`).
 - Cost figures come from `src/lib/receipt/eval/pricing.ts`. Update it when prices or the eval models change.
 - `ANTHROPIC_API_KEY` is read from the environment only. Never print, log, or write it.
