@@ -78,7 +78,12 @@ work, base the branch on the unmerged PR's branch, open its PR against that bran
 2. Write `.crew/tasks/<id>.md` with status `running`.
 3. Call the Agent tool with `subagent_type: "crewmate"` (or `"scout"`), `description: "<id>: <a few
    words>"`, and the crew brief below as the prompt. Isolation and background come from the
-   definition. Pass `model` only if the captain asks for a cheaper or faster worker.
+   definition. Pass `model` only if the captain asks for a cheaper or faster worker, or by default
+   for low-judgment, high-volume work: a scout doing a simple lookup, classification, or
+   log/output summarization, or a mechanical ship task (docs-only or a one-line change, like PR
+   #15's README update). Use `claude-haiku-5-5` for these; it supports the same five effort
+   levels (low/medium/high/xhigh/max) as the current models. Ship work needing real engineering
+   judgment stays on the inherited model.
 4. Record the returned agent id in `agent:` and add a log line.
 5. Tell the captain in a line or two what is under way. Don't wait: you'll be notified when it
    finishes.

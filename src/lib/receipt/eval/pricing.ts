@@ -20,6 +20,8 @@ export type ModelPrice = { inputUsdPerMTok: number; outputUsdPerMTok: number };
 export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
   'claude-haiku-4-5-20251001': { inputUsdPerMTok: 1, outputUsdPerMTok: 5 },
   'claude-sonnet-5': { inputUsdPerMTok: 2, outputUsdPerMTok: 10 },
+  // <=100k-token rate; above 100k it's $0.50/$2.50.
+  'claude-haiku-5-5': { inputUsdPerMTok: 0.1, outputUsdPerMTok: 0.5 },
 };
 
 export const COST_DISCLAIMER =
