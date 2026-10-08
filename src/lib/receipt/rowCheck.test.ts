@@ -209,6 +209,14 @@ describe('findMisplacedPrices', () => {
     expect(findMisplacedPrices(receiptWith('USD', rows, items))).toEqual([]);
   });
 
+  it('accepts an indented priced modifier folded into the item above it without renaming it', () => {
+    // fixtures/receipts/chipotle-fremont-takeout-modifier.jpg: the answer keeps
+    // the item named "Chicken Bowl", folding only Guacamole's price into it.
+    const rows = ['Chicken Bowl 11.35', '  Guacamole 2.95'];
+    const items = [item('Chicken Bowl', 1430)];
+    expect(findMisplacedPrices(receiptWith('USD', rows, items))).toEqual([]);
+  });
+
   it('never lets an unpriced row borrow the price of a line below it that the read dropped', () => {
     const rows = ['2 Draft Beer 17.00', 'Omakase F', 'Katsu 18.95'];
     const items = [item('Draft Beer', 1700, 2), item('Omakase F', 1895)];
