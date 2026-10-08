@@ -4,7 +4,14 @@ const expoConfig = require('eslint-config-expo/flat');
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/*', 'firstmate/*', 'backpass/*', 'supabase/functions/*'],
+    // .claude/worktrees holds crew copies of this repo; each one is linted from inside itself.
+    ignores: [
+      'dist/*',
+      'firstmate/*',
+      'backpass/*',
+      'supabase/functions/*',
+      '.claude/worktrees/*',
+    ],
   },
   {
     // Contract suites are authored upstream and must never be edited (SPEC section 0),
