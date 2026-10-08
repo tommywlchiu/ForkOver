@@ -56,6 +56,8 @@ async function typeInto(testID: string, text: string) {
 }
 
 describe('payer flow: scan to claimed totals', () => {
+  // This drives the full screen flow end to end; bump past the 5000ms default so it
+  // doesn't time out under CI/parallel-test contention (SPEC.md section 11, M3 checkpoint).
   it('reproduces the realistic-receipt split ($25.12 / $35.99 / $22.53)', async () => {
     renderRouter('./src/app', { initialUrl: '/' });
 
@@ -130,5 +132,5 @@ describe('payer flow: scan to claimed totals', () => {
       expect(screen.getByTestId(`person-total-${baileyId}`)).toHaveTextContent('$35.99');
       expect(screen.getByTestId(`person-total-${caseyId}`)).toHaveTextContent('$22.53');
     });
-  });
+  }, 15000);
 });
