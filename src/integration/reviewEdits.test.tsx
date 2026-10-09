@@ -7,6 +7,23 @@ import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-li
 import { useBillStore } from '../state/bill';
 import { useSessionStore } from '../state/session';
 
+// Fakes Supabase Auth/postgrest (see src/data/__mocks__/supabaseClient.ts) and the browser leg of
+// the OAuth deep-link flow, so signing in doesn't need a network call or expo-sqlite's native
+// module. The access token encodes the fake user id the mock client reads back.
+jest.mock('../data/supabaseClient');
+// Test-only reset hook the mock exports but the real module doesn't; accessed dynamically so
+// tsc doesn't check it against the real module's type.
+const { __resetFakeSupabase } = jest.requireMock('../data/supabaseClient') as {
+  __resetFakeSupabase: () => void;
+};
+jest.mock('expo-web-browser', () => ({
+  maybeCompleteAuthSession: jest.fn(),
+  openAuthSessionAsync: jest.fn(async () => ({
+    type: 'success',
+    url: 'forkover://auth-callback#access_token=mock-access-test-user&refresh_token=mock-refresh-test-user&token_type=bearer',
+  })),
+}));
+
 jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
   requestMediaLibraryPermissionsAsync: jest.fn(async () => ({ granted: true })),
@@ -38,7 +55,7 @@ async function typeInto(testID: string, text: string) {
 }
 
 async function signIn() {
-  await press('sign-in-apple-button');
+  await press('sign-in-google-button');
   await typeInto('username-input', 'alex');
   await press('username-continue-button');
 }
@@ -50,9 +67,10 @@ function onlyBill() {
 }
 
 describe('review edits', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useBillStore.setState({ bills: {} });
-    useSessionStore.getState().signOut();
+    await useSessionStore.getState().signOut();
+    __resetFakeSupabase();
   });
 
   it('adds and edits a fee in manual entry and includes it in the totals', async () => {
