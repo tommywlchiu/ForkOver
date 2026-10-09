@@ -23,7 +23,11 @@ export type ParseErrorCode =
 
 export type ParseEvent =
   | ({ type: 'item' } & ParsedLineItem)
-  | { type: 'done'; receipt: ParsedReceipt; usage: Usage }
+  // `usage` is set by this module's own model call; the real network reader
+  // (src/data/receiptReader.ts) adapts the Edge Function's wire event, which
+  // carries `billId` instead (see WireEvent in supabase/functions' handler.ts)
+  // and has no usage figure of its own, so both fields are optional here.
+  | { type: 'done'; receipt: ParsedReceipt; usage?: Usage; billId?: string }
   | { type: 'error'; code: ParseErrorCode };
 
 export async function* parseReceiptImage(

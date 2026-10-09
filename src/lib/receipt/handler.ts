@@ -164,7 +164,9 @@ async function* run(
         return;
       } else {
         receipt = event.receipt;
-        deps.onScanUsage?.(event.usage);
+        // parseReceiptImage's own 'done' event always carries usage; the optional type on
+        // ParseEvent only exists for the client's network-adapted reader (receiptReader.ts).
+        if (event.usage) deps.onScanUsage?.(event.usage);
       }
     }
     if (receipt === null) throw new Error('parse ended without a result');
