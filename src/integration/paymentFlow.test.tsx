@@ -12,6 +12,18 @@ import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-li
 import { useBillStore } from '../state/bill';
 import { useSessionStore } from '../state/session';
 
+// Fakes Supabase Auth/postgrest (see src/data/__mocks__/supabaseClient.ts) and the browser leg of
+// the OAuth deep-link flow, so signing in doesn't need a network call or expo-sqlite's native
+// module. The access token encodes the fake user id the mock client reads back.
+jest.mock('../data/supabaseClient');
+jest.mock('expo-web-browser', () => ({
+  maybeCompleteAuthSession: jest.fn(),
+  openAuthSessionAsync: jest.fn(async () => ({
+    type: 'success',
+    url: 'forkover://auth-callback#access_token=mock-access-test-user&refresh_token=mock-refresh-test-user&token_type=bearer',
+  })),
+}));
+
 jest.mock('expo-image-picker', () => ({
   requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
   requestMediaLibraryPermissionsAsync: jest.fn(async () => ({ granted: true })),
@@ -61,8 +73,8 @@ describe('payer flow: scan to claimed totals', () => {
   it('reproduces the realistic-receipt split ($25.12 / $35.99 / $22.53)', async () => {
     renderRouter('./src/app', { initialUrl: '/' });
 
-    // Sign in (stand-in) and pick a username.
-    await press('sign-in-apple-button');
+    // Sign in (Google, via the mocked OAuth flow) and pick a username.
+    await press('sign-in-google-button');
     await typeInto('username-input', 'alex');
     await press('username-continue-button');
 
