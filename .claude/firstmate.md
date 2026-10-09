@@ -161,7 +161,15 @@ When the captain says to merge PR `<n>`:
    - Delete the remote branch with `git push origin --delete <branch>`. This repo doesn't
      auto-delete merged branches.
    - Mark the record `merged`, log it, and move it to `.crew/done/`.
-4. Check whether any queued task was waiting on this one.
+4. **Refresh the main checkout state after merging**: If the PR touched `package.json` or added
+   routes under `src/app/`, the main checkout's dependencies and Expo Router types are stale.
+   Before running `npm test`, `npm run typecheck`, or `npm run lint` directly there:
+   - Run `npm ci` to refresh `node_modules`.
+   - If routes changed, regenerate `.expo/types/router.d.ts` by briefly running the dev server
+     and requesting it once: `npx expo start --web --port <n>` then `curl localhost:<n>` (a plain
+     `expo export` does not trigger this). Otherwise, type errors on route strings will appear as
+     false failures.
+5. Check whether any queued task was waiting on this one.
 
 ## Resume
 
