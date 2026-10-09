@@ -10,7 +10,7 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { handleParseReceipt, type ParseReceiptDeps } from '../../../src/lib/receipt/handler.ts';
-import { dataPorts } from './ports.ts';
+import { createDataPorts } from './ports.ts';
 
 const DEFAULT_MAX_IMAGE_BYTES = 5_000_000;
 
@@ -25,7 +25,7 @@ const supabase = createClient(requireEnv('SUPABASE_URL'), requireEnv('SUPABASE_S
 });
 
 const deps: ParseReceiptDeps = {
-  ...dataPorts,
+  ...createDataPorts(supabase),
   authenticate: async (req) => {
     const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
     if (!token) return null;

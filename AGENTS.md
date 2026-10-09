@@ -17,10 +17,15 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   implementation; `src/state/bill.ts` is the zustand store screens use, wrapping it and calling
   `src/lib/claims` + `src/lib/split` for derived state. Swapping in Supabase later means replacing
   the implementation behind `BillStore`, not the screens or the zustand store's shape.
-- `src/data/receiptReader.ts` is the one place a screen gets a receipt reader. It currently always
-  returns the stand-in reader (`src/lib/receipt/standIn/`), which replays a canned `ParsedReceipt`
-  (`scenarios.ts`) through the same event-stream shape `parseReceiptImage` will produce; wiring in
-  the real `parse-receipt` Edge Function is a one-function change in that file.
+- `src/data/receiptReader.ts` is the one place a screen gets a receipt reader. It POSTs the image
+  to the real `parse-receipt` Edge Function with the signed-in user's bearer token
+  (`supabase.auth.getSession()`) and adapts its NDJSON `WireEvent` stream (handler.ts) into
+  `ParseEvent` (`parseReceipt.ts`); the two `done` shapes differ (`billId` vs `usage`), so both are
+  optional on `ParseEvent`. Uses `expo/fetch` by name: Expo SDK 57 installs it as the global fetch
+  on native specifically because RN's built-in fetch has historically not streamed response bodies
+  there. Tests fully mock this module (see `src/integration/paymentFlow.test.tsx`) and instead
+  drive `src/lib/receipt/standIn/`, which replays a canned `ParsedReceipt` (`scenarios.ts`) through
+  the same event-stream shape.
 - `src/state/session.ts` backs the session with real Supabase Auth (Google only; Apple is deferred
   to M6). `src/data/supabaseClient.ts` is the one Supabase client; session persistence uses
   `expo-sqlite`'s `localStorage` polyfill (Expo's current guidance for SDK 57+), not
@@ -80,6 +85,13 @@ npm run measure:scan-latency # median shutter-to-sent over N stand-in runs (SPEC
 - Files that Deno imports (`src/lib/receipt/{schema,partialJson,prompt,anthropic,parseReceipt,rowCheck,handler}.ts` and `src/lib/money/currency.ts`) import each other with explicit `.ts` extensions and no dependencies. Keep it that way.
 - `supabase start` and `supabase functions serve` need Docker (WSL integration enabled). The CLI is a dev dependency: `npx supabase ...`.
 - Secrets live in `supabase/functions/.env.local` (git-ignored, template in `.env.example`), never in client code.
+- `parse-receipt/ports.ts` exports `createDataPorts(supabase)`, a factory over the one service-role
+  client `index.ts` already creates (not a second client). It is the only code that reads or writes
+  `bills`, `scan_usage`, and `scan_log`: each has RLS enabled with zero policies, so `anon`/
+  `authenticated` are denied by default until a later milestone adds real policies. Verify any
+  change to these tables or `ports.ts` against local Docker (`npx supabase db reset`, `npx supabase
+  test db --local`); ports.ts itself has no jest coverage (same reason as other Deno-imported
+  files), so exercise it directly against the local stack before trusting it.
 
 ## Receipt eval
 
