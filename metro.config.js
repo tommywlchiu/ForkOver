@@ -8,8 +8,15 @@ const config = getDefaultConfig(__dirname);
 // crawling them when it runs from the main checkout. The pattern is anchored to this project root,
 // so Metro running inside one of those worktrees still sees its own files.
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const root = __dirname.split(/[\\/]/).map(escapeRegExp).join('[\\\\/]');
-const crewWorktrees = new RegExp(`^(?:${root}[\\\\/])?\\.claude[\\\\/]worktrees(?:[\\\\/]|$)`, 'i');
+const escapedRoot = __dirname.split(/[\\/]/).map(escapeRegExp).join('[\\\\/]');
+// No 'i' flag: Metro's own default blockList patterns carry no flags, and combining patterns
+// with mismatched flags crashes Metro's file watcher ("Cannot combine blockList patterns,
+// because they have different flags") - found when the m3-auth task ran `expo start --web`
+// from inside a worktree. The one case difference that's actually plausible on Windows is the
+// drive letter (tools disagree on "C:\" vs "c:\"), so make just that one character case-flexible
+// instead of flagging the whole pattern.
+const root = escapedRoot.replace(/^([A-Za-z])(?=:)/, (letter) => `[${letter.toLowerCase()}${letter.toUpperCase()}]`);
+const crewWorktrees = new RegExp(`^(?:${root}[\\\\/])?\\.claude[\\\\/]worktrees(?:[\\\\/]|$)`);
 config.resolver.blockList = [config.resolver.blockList ?? []].flat().concat(crewWorktrees);
 
 module.exports = config;
