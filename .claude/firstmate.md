@@ -151,6 +151,11 @@ When the captain says to merge PR `<n>`:
      `gh pr edit <m> --base master`.
    - Remove the worktree with `git worktree remove <path>`. If git refuses because of uncommitted or
      untracked files, stop and look. A locked worktree means its worker is still running.
+     On Windows, if the error is "Invalid argument" or similar (not the uncommitted-files refusal),
+     a leftover dev-server process may have files open in the worktree. Find it with
+     `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` and match its `CommandLine` against
+     the worktree path. Stop the process, delete the directory directly (git may have already dropped
+     it from its registry), then run `git worktree prune` to confirm no stale metadata remains.
    - Delete the worker's local branch (`git worktree list` shows it before removal) with
      `git branch -D <branch>`, but only if it points at the PR's `headRefOid`.
    - Delete the remote branch with `git push origin --delete <branch>`. This repo doesn't
