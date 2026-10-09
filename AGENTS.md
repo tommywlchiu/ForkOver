@@ -21,8 +21,14 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   returns the stand-in reader (`src/lib/receipt/standIn/`), which replays a canned `ParsedReceipt`
   (`scenarios.ts`) through the same event-stream shape `parseReceiptImage` will produce; wiring in
   the real `parse-receipt` Edge Function is a one-function change in that file.
-- `src/state/session.ts` is a STAND-IN local session: `signIn()` fabricates a local user with no
-  network call. Real Apple/Google sign-in through Supabase Auth replaces this store's internals.
+- `src/state/session.ts` backs the session with real Supabase Auth (Google only; Apple is deferred
+  to M6). `src/data/supabaseClient.ts` is the one Supabase client; session persistence uses
+  `expo-sqlite`'s `localStorage` polyfill (Expo's current guidance for SDK 57+), not
+  `@react-native-async-storage/async-storage`. `signIn()` is async (it opens a browser and awaits
+  the `forkover://` redirect) and `onAuthStateChange` keeps the store in sync across restarts.
+  Jest tests mock `../data/supabaseClient` with `src/data/__mocks__/supabaseClient.ts`, a fake
+  Auth + `profiles` table; see `src/state/session.test.ts` and the integration tests for the
+  pattern (also mocking `expo-web-browser`'s `openAuthSessionAsync`).
 - `REALISTIC_RECEIPT` in `src/lib/receipt/standIn/scenarios.ts` mirrors `split.test.ts`'s "realistic
   receipt" worked example (payer a, b owes 3599, c owes 2253); claiming it the same way through the
   Bill screen reproduces those exact totals, which is what `src/integration/paymentFlow.test.tsx`
