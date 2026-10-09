@@ -3,7 +3,7 @@
 -- have no policies at all in M3, so a signed-in user must be denied every read and write on all
 -- four. Only `parse-receipt`'s service-role client touches them.
 begin;
-select plan(10);
+select plan(11);
 
 insert into auth.users (id, email) values
   ('33333333-3333-3333-3333-333333333333', 'payer@example.com');
@@ -53,6 +53,15 @@ select is_empty(
 select is_empty(
   $$ select 1 from public.scan_log where user_id = '33333333-3333-3333-3333-333333333333' $$,
   'signed-in user cannot read their own scan_log row'
+);
+
+-- The atomic increment helper (recordSuccessfulScan, SPEC 8.1) runs with the caller's own
+-- rights (`security invoker`), so a signed-in user calling it directly still hits
+-- scan_usage's policy-free RLS on the write inside, the same as writing the table themselves.
+select throws_ok(
+  $$ select public.increment_scan_usage('33333333-3333-3333-3333-333333333333', '2026-10') $$,
+  'new row violates row-level security policy for table "scan_usage"',
+  'signed-in user cannot call increment_scan_usage to bump their own quota'
 );
 
 select throws_ok(
