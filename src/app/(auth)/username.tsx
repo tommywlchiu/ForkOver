@@ -1,7 +1,9 @@
 /**
  * Username step (SPEC.md sections 2.1, 13 default 16): 3-20 chars, lowercase
- * letters/digits/underscores, unique regardless of case. Real uniqueness
- * checking needs the Supabase backend (M4); this only validates the shape.
+ * letters/digits/underscores, unique regardless of case. This only validates the shape and
+ * writes to the signed-in user's `profiles` row; live uniqueness checking as you type is M4
+ * (`search_usernames`). A unique-constraint violation on submit (SPEC 8.1) surfaces as a plain
+ * "taken" message instead.
  */
 import { Redirect, router } from 'expo-router';
 import { useState } from 'react';
@@ -19,17 +21,32 @@ export default function Username() {
   const [username, setUsernameText] = useState('');
   const [venmo, setVenmo] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isSignedIn) return <Redirect href="/sign-in" />;
 
-  const submit = () => {
+  const submit = async () => {
     const normalized = username.trim().toLowerCase();
     if (!USERNAME_PATTERN.test(normalized)) {
       setError('3 to 20 characters: lowercase letters, digits, and underscores.');
       return;
     }
-    setUsername(normalized, venmo);
-    router.replace('/');
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const result = await setUsername(normalized, venmo);
+      if (!result.ok) {
+        setError(
+          result.reason === 'taken'
+            ? "That username's taken, try another."
+            : 'Something went wrong saving your username. Please try again.',
+        );
+        return;
+      }
+      router.replace('/');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -73,7 +90,12 @@ export default function Username() {
         style={[styles.input, { borderColor: theme.border, color: theme.text, backgroundColor: theme.surface }]}
       />
 
-      <PrimaryButton testID="username-continue-button" label="Continue" onPress={submit} disabled={username.trim().length === 0} />
+      <PrimaryButton
+        testID="username-continue-button"
+        label={isSubmitting ? 'Saving…' : 'Continue'}
+        onPress={submit}
+        disabled={username.trim().length === 0 || isSubmitting}
+      />
     </View>
   );
 }

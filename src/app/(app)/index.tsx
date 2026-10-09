@@ -22,7 +22,7 @@ export default function Home() {
   const userId = useSessionStore((s) => s.userId)!;
   const username = useSessionStore((s) => s.username)!;
   const aiConsentAt = useSessionStore((s) => s.aiConsentAt);
-  const grantAiConsent = useSessionStore((s) => s.grantAiConsent);
+  const recordAiConsent = useSessionStore((s) => s.recordAiConsent);
   const scansUsedThisMonth = useSessionStore((s) => s.scansUsedThisMonth);
 
   const bills = useBillStore((s) => s.bills);
@@ -134,7 +134,7 @@ export default function Home() {
       <ConsentSheet
         visible={consentVisible}
         onAllow={() => {
-          grantAiConsent();
+          recordAiConsent();
           setConsentVisible(false);
           router.push('/scan');
         }}
