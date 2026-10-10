@@ -13,20 +13,17 @@ import type * as NetInfoType from '@react-native-community/netinfo';
 
 let NetInfo: typeof NetInfoType.default | null = null;
 
-// Lazy-load NetInfo only on native platforms to avoid import errors on web/tests
-async function loadNetInfo() {
-  if (Platform.OS !== 'web' && typeof jest === 'undefined') {
-    try {
-      const netinfo = await import('@react-native-community/netinfo');
-      NetInfo = netinfo.default;
-    } catch {
-      // NetInfo not available or failed to load
+/** Get initial connectivity state based on platform and navigator.onLine */
+function getInitialConnectedState(): boolean {
+  if (Platform.OS === 'web') {
+    // On web, read navigator.onLine for actual initial state
+    if (typeof window !== 'undefined' && typeof navigator.onLine === 'boolean') {
+      return navigator.onLine;
     }
   }
+  // Default to connected if we can't determine state
+  return true;
 }
-
-// Start loading NetInfo if on native
-loadNetInfo();
 
 export type ConnectivityState = {
   isConnected: boolean;
@@ -45,25 +42,12 @@ export const useConnectivityStore = create<ConnectivityState>((set) => {
       window.addEventListener('online', handleOnline);
       window.addEventListener('offline', handleOffline);
     }
-  } else if (NetInfo) {
-    // Native: use NetInfo listener
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _unsubscribe = NetInfo.addEventListener((state) => {
-      const isConnected = state.isConnected === true && state.isInternetReachable !== false;
-      set({ isConnected, isInitialized: true });
-    });
-
-    // Initial check
-    NetInfo.fetch().then((state) => {
-      const isConnected = state.isConnected === true && state.isInternetReachable !== false;
-      set({ isConnected, isInitialized: true });
-    });
   }
 
-  // Return initial state
+  // Return initial state with real navigator.onLine value for web
   return {
-    isConnected: true,
-    isInitialized: true,
+    isConnected: getInitialConnectedState(),
+    isInitialized: Platform.OS === 'web', // web is initialized immediately; native waits for NetInfo load
     checkConnection: async () => {
       if (Platform.OS === 'web') {
         if (typeof window !== 'undefined' && typeof navigator.onLine === 'boolean') {
@@ -78,4 +62,36 @@ export const useConnectivityStore = create<ConnectivityState>((set) => {
     },
   };
 });
+
+/** Set up native connectivity listener after NetInfo loads (async). */
+async function initializeNativeConnectivity() {
+  if (Platform.OS === 'web' || typeof jest !== 'undefined') {
+    return; // Skip on web or in tests
+  }
+
+  try {
+    const netinfo = await import('@react-native-community/netinfo');
+    NetInfo = netinfo.default;
+
+    if (!NetInfo) return;
+
+    // Set up listener
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _unsubscribe = NetInfo.addEventListener((state) => {
+      const isConnected = state.isConnected === true && state.isInternetReachable !== false;
+      useConnectivityStore.setState({ isConnected, isInitialized: true });
+    });
+
+    // Initial check
+    const state = await NetInfo.fetch();
+    const isConnected = state.isConnected === true && state.isInternetReachable !== false;
+    useConnectivityStore.setState({ isConnected, isInitialized: true });
+  } catch {
+    // NetInfo not available or failed to load; mark as initialized so we don't wait forever
+    useConnectivityStore.setState({ isInitialized: true });
+  }
+}
+
+// Start loading NetInfo on native platforms
+initializeNativeConnectivity();
 
