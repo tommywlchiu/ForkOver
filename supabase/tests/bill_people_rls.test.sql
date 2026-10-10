@@ -11,11 +11,14 @@ insert into auth.users (id, email) values
   ('c1000000-0000-0000-0000-000000000003', 'guest@people.example'),
   ('c1000000-0000-0000-0000-000000000004', 'outsider@people.example');
 
-insert into public.bills (id, payer_user_id, status)
-values ('c2000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'open');
+-- Explicit share_token values (rather than the generated default) so the tests below can pass
+-- them to join_bill directly: a real caller has the token from the share link URL itself, not
+-- from querying `bills` (which they can't do yet - they aren't a member until they join).
+insert into public.bills (id, payer_user_id, status, share_token)
+values ('c2000000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-000000000001', 'open', 'open-bill-share-token');
 
-insert into public.bills (id, payer_user_id, status)
-values ('c2000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000001', 'closed');
+insert into public.bills (id, payer_user_id, status, share_token)
+values ('c2000000-0000-0000-0000-000000000002', 'c1000000-0000-0000-0000-000000000001', 'closed', 'closed-bill-share-token');
 
 set role authenticated;
 
@@ -24,7 +27,7 @@ set request.jwt.claim.sub = 'c1000000-0000-0000-0000-000000000002';
 
 select results_eq(
   $$ select kind from public.join_bill(
-       (select share_token from public.bills where id = 'c2000000-0000-0000-0000-000000000001'),
+       'open-bill-share-token',
        'Riley'
      ) $$,
   $$ values ('member'::text) $$,
@@ -41,7 +44,7 @@ select results_eq(
 
 select results_eq(
   $$ select display_name from public.join_bill(
-       (select share_token from public.bills where id = 'c2000000-0000-0000-0000-000000000001'),
+       'open-bill-share-token',
        'A different name'
      ) $$,
   $$ values ('Riley'::text) $$,
@@ -56,7 +59,7 @@ set request.jwt.claims = '{"sub": "c1000000-0000-0000-0000-000000000003", "is_an
 
 select results_eq(
   $$ select kind from public.join_bill(
-       (select share_token from public.bills where id = 'c2000000-0000-0000-0000-000000000001'),
+       'open-bill-share-token',
        'Guest Sam'
      ) $$,
   $$ values ('guest'::text) $$,
@@ -70,7 +73,7 @@ set request.jwt.claim.sub = 'c1000000-0000-0000-0000-000000000004';
 
 select throws_ok(
   $$ select public.join_bill(
-       (select share_token from public.bills where id = 'c2000000-0000-0000-0000-000000000002'),
+       'closed-bill-share-token',
        'Too Late'
      ) $$,
   'this bill is closed',
@@ -79,7 +82,7 @@ select throws_ok(
 
 select throws_ok(
   $$ select public.join_bill(
-       (select share_token from public.bills where id = 'c2000000-0000-0000-0000-000000000001'),
+       'open-bill-share-token',
        ''
      ) $$,
   'display_name must be 1 to 30 characters',
