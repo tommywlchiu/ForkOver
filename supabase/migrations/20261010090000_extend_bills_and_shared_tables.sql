@@ -113,20 +113,34 @@ alter table public.bill_people enable row level security;
 -- Every bill gets its payer as a `bill_people` row the moment it's created, so `claims.created_by`
 -- (a `bill_people` id) always has something to point at when the payer claims on someone else's
 -- behalf (FR-32), without `join_bill` needing a special case for the payer visiting their own link.
+-- Mirrors `applySession`'s own fallback chain in src/state/session.ts (profiles.display_name,
+-- then the OAuth user_metadata.full_name/.name, then a last-resort literal) rather than only
+-- checking `profiles.display_name` - no client code ever writes that column (it starts null and
+-- stays null unless the payer visits a settings screen that doesn't exist yet), so checking it
+-- alone always fell through to the literal 'Payer' for every bill, every time.
 create function public.handle_new_bill()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_display_name text;
 begin
+  select
+    coalesce(
+      p.display_name,
+      u.raw_user_meta_data ->> 'full_name',
+      u.raw_user_meta_data ->> 'name',
+      'Payer'
+    )
+  into v_display_name
+  from public.profiles p
+  join auth.users u on u.id = p.id
+  where p.id = new.payer_user_id;
+
   insert into public.bill_people (bill_id, user_id, display_name, kind)
-  values (
-    new.id,
-    new.payer_user_id,
-    coalesce((select display_name from public.profiles where id = new.payer_user_id), 'Payer'),
-    'payer'
-  );
+  values (new.id, new.payer_user_id, coalesce(v_display_name, 'Payer'), 'payer');
   return new;
 end;
 $$;

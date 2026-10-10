@@ -3,13 +3,14 @@
 -- claims for someone else, an outsider can't read claims, and claim changes are rejected once the
 -- bill is closed, the item has a payment, or `bill_id` doesn't match the item/person it names.
 begin;
-select plan(12);
+select plan(15);
 
 insert into auth.users (id, email) values
   ('f1000000-0000-0000-0000-000000000001', 'payer@claims.example'),
   ('f1000000-0000-0000-0000-000000000002', 'member-b@claims.example'),
   ('f1000000-0000-0000-0000-000000000003', 'member-c@claims.example'),
-  ('f1000000-0000-0000-0000-000000000004', 'outsider@claims.example');
+  ('f1000000-0000-0000-0000-000000000004', 'outsider@claims.example'),
+  ('f1000000-0000-0000-0000-000000000005', 'guest@claims.example');
 
 insert into public.bills (id, payer_user_id, status)
 values ('f2000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'open');
@@ -24,11 +25,14 @@ values ('f2000000-0000-0000-0000-000000000002', 'f1000000-0000-0000-0000-0000000
 -- above; only the two members need adding directly here.
 insert into public.bill_people (id, bill_id, user_id, display_name, kind) values
   ('f3000000-0000-0000-0000-000000000002', 'f2000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000002', 'Member B', 'member'),
-  ('f3000000-0000-0000-0000-000000000003', 'f2000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Member C', 'member');
+  ('f3000000-0000-0000-0000-000000000003', 'f2000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000003', 'Member C', 'member'),
+  ('f3000000-0000-0000-0000-000000000005', 'f2000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000005', 'Guest', 'guest');
 
 insert into public.bill_items (id, bill_id, name, price_cents, position) values
   ('f4000000-0000-0000-0000-000000000001', 'f2000000-0000-0000-0000-000000000001', 'Pizza', 1200, 0),
-  ('f4000000-0000-0000-0000-000000000002', 'f2000000-0000-0000-0000-000000000001', 'Salad', 800, 1);
+  ('f4000000-0000-0000-0000-000000000002', 'f2000000-0000-0000-0000-000000000001', 'Salad', 800, 1),
+  ('f4000000-0000-0000-0000-000000000006', 'f2000000-0000-0000-0000-000000000001', 'Soda', 300, 2),
+  ('f4000000-0000-0000-0000-000000000007', 'f2000000-0000-0000-0000-000000000001', 'Soup', 700, 3);
 
 -- A paid item, for the lock trigger.
 insert into public.payments (item_id, person_id, bill_id)
@@ -175,6 +179,51 @@ select throws_ok(
      ) $$,
   'claims.bill_id does not match the item''s bill',
   'a spoofed bill_id is rejected'
+);
+
+-- A guest is treated exactly like a member: can claim for themselves on an unpaid item.
+set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000005';
+
+select lives_ok(
+  $$ insert into public.claims (item_id, person_id, bill_id, mode, created_by)
+     values (
+       'f4000000-0000-0000-0000-000000000006', 'f3000000-0000-0000-0000-000000000005',
+       'f2000000-0000-0000-0000-000000000001', 'mine', 'f3000000-0000-0000-0000-000000000005'
+     ) $$,
+  'a guest can claim an item for themselves'
+);
+
+-- The lock check has to cover the item a claim is *leaving* on an UPDATE, not just the one it's
+-- landing on: claim item f4...0007 while it's still unpaid, mark it paid, then try moving that
+-- same claim onto the still-unpaid f4...0006. Checking only the destination's lock status would
+-- let this through, leaving f4...0007 with a payment but no matching claim.
+set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000002';
+
+select lives_ok(
+  $$ insert into public.claims (item_id, person_id, bill_id, mode, created_by)
+     values (
+       'f4000000-0000-0000-0000-000000000007', 'f3000000-0000-0000-0000-000000000002',
+       'f2000000-0000-0000-0000-000000000001', 'mine', 'f3000000-0000-0000-0000-000000000002'
+     ) $$,
+  'a member can claim an item that is not yet paid'
+);
+
+reset role;
+insert into public.payments (item_id, person_id, bill_id)
+values (
+  'f4000000-0000-0000-0000-000000000007',
+  'f3000000-0000-0000-0000-000000000002',
+  'f2000000-0000-0000-0000-000000000001'
+);
+set role authenticated;
+set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000002';
+
+select throws_ok(
+  $$ update public.claims set item_id = 'f4000000-0000-0000-0000-000000000006'
+     where item_id = 'f4000000-0000-0000-0000-000000000007'
+       and person_id = 'f3000000-0000-0000-0000-000000000002' $$,
+  'claims locked: bill f2000000-0000-0000-0000-000000000001 is closed or item f4000000-0000-0000-0000-000000000007 has a paid portion',
+  'moving a claim off a now-paid item is rejected, not just checked against the destination'
 );
 
 reset role;

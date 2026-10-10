@@ -3,12 +3,13 @@
 -- read assignments, an outsider can't, and assignment changes are rejected when the bill is
 -- closed, the item has a payment, or `assigned_to` names someone off the bill.
 begin;
-select plan(12);
+select plan(16);
 
 insert into auth.users (id, email) values
   ('a5000000-0000-0000-0000-000000000001', 'payer@assign.example'),
   ('a5000000-0000-0000-0000-000000000002', 'member@assign.example'),
-  ('a5000000-0000-0000-0000-000000000003', 'outsider@assign.example');
+  ('a5000000-0000-0000-0000-000000000003', 'outsider@assign.example'),
+  ('a5000000-0000-0000-0000-000000000004', 'guest@assign.example');
 
 insert into public.bills (id, payer_user_id, status)
 values ('a6000000-0000-0000-0000-000000000001', 'a5000000-0000-0000-0000-000000000001', 'open');
@@ -28,10 +29,21 @@ values (
   'member'
 );
 
+insert into public.bill_people (id, bill_id, user_id, display_name, kind)
+values (
+  'a7000000-0000-0000-0000-000000000004',
+  'a6000000-0000-0000-0000-000000000001',
+  'a5000000-0000-0000-0000-000000000004',
+  'Guest',
+  'guest'
+);
+
 insert into public.bill_items (id, bill_id, name, price_cents, position) values
   ('a8000000-0000-0000-0000-000000000001', 'a6000000-0000-0000-0000-000000000001', 'Burger', 1000, 0),
   ('a8000000-0000-0000-0000-000000000002', 'a6000000-0000-0000-0000-000000000001', 'Shake', 500, 1),
-  ('a8000000-0000-0000-0000-000000000003', 'a6000000-0000-0000-0000-000000000002', 'Soup', 500, 0);
+  ('a8000000-0000-0000-0000-000000000003', 'a6000000-0000-0000-0000-000000000002', 'Soup', 500, 0),
+  ('a8000000-0000-0000-0000-000000000004', 'a6000000-0000-0000-0000-000000000001', 'Fries', 400, 2),
+  ('a8000000-0000-0000-0000-000000000005', 'a6000000-0000-0000-0000-000000000001', 'Pie', 600, 3);
 
 update public.bills set status = 'closed' where id = 'a6000000-0000-0000-0000-000000000002';
 
@@ -148,6 +160,57 @@ set request.jwt.claim.sub = 'a5000000-0000-0000-0000-000000000001';
 select lives_ok(
   $$ delete from public.assignments where item_id = 'a8000000-0000-0000-0000-000000000001' $$,
   'the payer can delete an assignment'
+);
+
+-- A guest is treated exactly like a member: can read assignments, can't create one.
+set request.jwt.claim.sub = 'a5000000-0000-0000-0000-000000000004';
+
+select results_eq(
+  $$ select count(*)::int from public.assignments where bill_id = 'a6000000-0000-0000-0000-000000000001' $$,
+  $$ values (1) $$,
+  'a guest can read the bill''s assignments'
+);
+
+select throws_ok(
+  $$ insert into public.assignments (item_id, bill_id, assigned_to)
+     values (
+       'a8000000-0000-0000-0000-000000000004', 'a6000000-0000-0000-0000-000000000001',
+       array['a7000000-0000-0000-0000-000000000004']::uuid[]
+     ) $$,
+  'new row violates row-level security policy for table "assignments"',
+  'a guest cannot assign an item'
+);
+
+-- The lock check has to cover the item an assignment is *leaving* on an UPDATE, not just the one
+-- it's landing on - item_id is this table's primary key, but moving a row's own PK value with
+-- UPDATE is still ordinary SQL. Assign a8...0005 while unpaid, mark it paid, then try moving that
+-- assignment onto the still-unpaid a8...0004.
+set request.jwt.claim.sub = 'a5000000-0000-0000-0000-000000000001';
+
+select lives_ok(
+  $$ insert into public.assignments (item_id, bill_id, assigned_to)
+     values (
+       'a8000000-0000-0000-0000-000000000005', 'a6000000-0000-0000-0000-000000000001',
+       array['a7000000-0000-0000-0000-000000000002']::uuid[]
+     ) $$,
+  'the payer can assign an item that is not yet paid'
+);
+
+reset role;
+insert into public.payments (item_id, person_id, bill_id)
+values (
+  'a8000000-0000-0000-0000-000000000005',
+  'a7000000-0000-0000-0000-000000000002',
+  'a6000000-0000-0000-0000-000000000001'
+);
+set role authenticated;
+set request.jwt.claim.sub = 'a5000000-0000-0000-0000-000000000001';
+
+select throws_ok(
+  $$ update public.assignments set item_id = 'a8000000-0000-0000-0000-000000000004'
+     where item_id = 'a8000000-0000-0000-0000-000000000005' $$,
+  'assignments locked: bill a6000000-0000-0000-0000-000000000001 is closed or item a8000000-0000-0000-0000-000000000005 has a paid portion',
+  'moving an assignment off a now-paid item is rejected, not just checked against the destination'
 );
 
 reset role;

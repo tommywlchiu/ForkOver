@@ -3,12 +3,22 @@
 -- update it, nothing (including `status` itself) can change once it's closed, there's no delete
 -- policy at all, and `closed_at` is derived rather than trusted from the caller.
 begin;
-select plan(18);
+select plan(21);
 
 insert into auth.users (id, email) values
   ('b1000000-0000-0000-0000-000000000001', 'payer@bills.example'),
   ('b1000000-0000-0000-0000-000000000002', 'member@bills.example'),
-  ('b1000000-0000-0000-0000-000000000003', 'outsider@bills.example');
+  ('b1000000-0000-0000-0000-000000000003', 'outsider@bills.example'),
+  ('b1000000-0000-0000-0000-000000000006', 'guest@bills.example');
+
+-- A payer who never filled in profiles.display_name (true of every user today - no client code
+-- writes that column) but does have an OAuth full_name, for the handle_new_bill fallback test.
+insert into auth.users (id, email, raw_user_meta_data)
+values (
+  'b1000000-0000-0000-0000-000000000005',
+  'named-payer@bills.example',
+  '{"full_name": "Jamie Payer"}'::jsonb
+);
 
 insert into public.bills (id, payer_user_id, status)
 values ('b2000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000001', 'open');
@@ -34,8 +44,22 @@ select results_eq(
   'on_bill_created gives the payer their own bill_people row'
 );
 
--- Add the member's `bill_people` row directly as the service role (join_bill's own behavior is
--- covered in bill_people_rls.test.sql).
+-- handle_new_bill falls back through profiles.display_name (always null today), then OAuth
+-- user_metadata, before the literal 'Payer' - matching applySession's own fallback chain in
+-- src/state/session.ts, rather than falling straight through to 'Payer' for every bill.
+insert into public.bills (id, payer_user_id, status)
+values ('b2000000-0000-0000-0000-000000000005', 'b1000000-0000-0000-0000-000000000005', 'open');
+
+select results_eq(
+  $$ select display_name from public.bill_people
+     where bill_id = 'b2000000-0000-0000-0000-000000000005' and kind = 'payer' $$,
+  $$ values ('Jamie Payer'::text) $$,
+  'on_bill_created falls back to the OAuth display name, not a literal "Payer"'
+);
+
+-- Add the member's and a guest's `bill_people` rows directly as the service role (join_bill's
+-- own behavior, including how a guest's row gets created, is covered in bill_people_rls.test.sql
+-- - RLS itself doesn't distinguish 'member' from 'guest', both just need a bill_people row).
 insert into public.bill_people (id, bill_id, user_id, display_name, kind)
 values (
   'b3000000-0000-0000-0000-000000000002',
@@ -43,6 +67,15 @@ values (
   'b1000000-0000-0000-0000-000000000002',
   'Member',
   'member'
+);
+
+insert into public.bill_people (id, bill_id, user_id, display_name, kind)
+values (
+  'b3000000-0000-0000-0000-000000000006',
+  'b2000000-0000-0000-0000-000000000001',
+  'b1000000-0000-0000-0000-000000000006',
+  'Guest',
+  'guest'
 );
 
 set role authenticated;
@@ -169,6 +202,21 @@ select is_empty(
      where id = 'b2000000-0000-0000-0000-000000000001'
      returning title $$,
   'member cannot update the bill'
+);
+
+set request.jwt.claim.sub = 'b1000000-0000-0000-0000-000000000006';
+
+select results_eq(
+  $$ select status from public.bills where id = 'b2000000-0000-0000-0000-000000000001' $$,
+  $$ values ('closed'::text) $$,
+  'a guest can read a bill they belong to'
+);
+
+select is_empty(
+  $$ update public.bills set title = 'Hacked'
+     where id = 'b2000000-0000-0000-0000-000000000001'
+     returning title $$,
+  'a guest cannot update the bill'
 );
 
 set request.jwt.claim.sub = 'b1000000-0000-0000-0000-000000000003';

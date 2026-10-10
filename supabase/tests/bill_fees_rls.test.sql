@@ -3,12 +3,13 @@
 -- create/edit/delete them, an outsider can't read them at all, and fees are locked once the bill
 -- is closed since they feed the split math directly.
 begin;
-select plan(12);
+select plan(14);
 
 insert into auth.users (id, email) values
   ('e1000000-0000-0000-0000-000000000001', 'payer@fees.example'),
   ('e1000000-0000-0000-0000-000000000002', 'member@fees.example'),
-  ('e1000000-0000-0000-0000-000000000003', 'outsider@fees.example');
+  ('e1000000-0000-0000-0000-000000000003', 'outsider@fees.example'),
+  ('e1000000-0000-0000-0000-000000000004', 'guest@fees.example');
 
 insert into public.bills (id, payer_user_id, status)
 values ('e2000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'open');
@@ -42,6 +43,15 @@ values (
   'e1000000-0000-0000-0000-000000000002',
   'Member',
   'member'
+);
+
+insert into public.bill_people (id, bill_id, user_id, display_name, kind)
+values (
+  'e3000000-0000-0000-0000-000000000004',
+  'e2000000-0000-0000-0000-000000000001',
+  'e1000000-0000-0000-0000-000000000004',
+  'Guest',
+  'guest'
 );
 
 insert into public.bill_fees (id, bill_id, label, cents, split)
@@ -134,6 +144,21 @@ select is_empty(
      where bill_id = 'e2000000-0000-0000-0000-000000000001'
      returning cents $$,
   'a member cannot edit a fee'
+);
+
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000004';
+
+select results_eq(
+  $$ select count(*)::int from public.bill_fees where bill_id = 'e2000000-0000-0000-0000-000000000001' $$,
+  $$ values (1) $$,
+  'a guest can read the bill''s fees'
+);
+
+select throws_ok(
+  $$ insert into public.bill_fees (bill_id, label, cents, split)
+     values ('e2000000-0000-0000-0000-000000000001', 'Sneaky', 100, 'equal') $$,
+  'new row violates row-level security policy for table "bill_fees"',
+  'a guest cannot add a fee'
 );
 
 set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000003';

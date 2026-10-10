@@ -380,7 +380,6 @@ security definer
 set search_path = public
 as $$
 declare
-  v_item_id uuid := coalesce(new.item_id, old.item_id);
   v_bill_id uuid := coalesce(new.bill_id, old.bill_id);
 begin
   if tg_op in ('INSERT', 'UPDATE') then
@@ -408,8 +407,16 @@ begin
     end if;
   end if;
 
-  if public.is_item_locked(v_item_id, v_bill_id) then
-    raise exception 'claims locked: bill % is closed or item % has a paid portion', v_bill_id, v_item_id;
+  -- Check both the item a claim is leaving (UPDATE/DELETE) and the one it's landing on
+  -- (INSERT/UPDATE). Checking only NEW.item_id would let an UPDATE move a claim off a
+  -- paid/closed item onto an unlocked one in the same statement - the move itself was never
+  -- rejected, since only the destination's lock status was being checked - leaving the original
+  -- item with a payment but no matching claim.
+  if tg_op in ('UPDATE', 'DELETE') and public.is_item_locked(old.item_id, v_bill_id) then
+    raise exception 'claims locked: bill % is closed or item % has a paid portion', v_bill_id, old.item_id;
+  end if;
+  if tg_op in ('INSERT', 'UPDATE') and public.is_item_locked(new.item_id, v_bill_id) then
+    raise exception 'claims locked: bill % is closed or item % has a paid portion', v_bill_id, new.item_id;
   end if;
 
   if tg_op = 'DELETE' then
@@ -451,7 +458,6 @@ security definer
 set search_path = public
 as $$
 declare
-  v_item_id uuid := coalesce(new.item_id, old.item_id);
   v_bill_id uuid := coalesce(new.bill_id, old.bill_id);
 begin
   if tg_op in ('INSERT', 'UPDATE') then
@@ -467,8 +473,14 @@ begin
     end if;
   end if;
 
-  if public.is_item_locked(v_item_id, v_bill_id) then
-    raise exception 'assignments locked: bill % is closed or item % has a paid portion', v_bill_id, v_item_id;
+  -- See guard_claim_change for why both the outgoing (UPDATE/DELETE) and incoming
+  -- (INSERT/UPDATE) `item_id` need checking - `item_id` is this table's primary key, but it's
+  -- still just a regular, payer-updatable column as far as the UPDATE policy is concerned.
+  if tg_op in ('UPDATE', 'DELETE') and public.is_item_locked(old.item_id, v_bill_id) then
+    raise exception 'assignments locked: bill % is closed or item % has a paid portion', v_bill_id, old.item_id;
+  end if;
+  if tg_op in ('INSERT', 'UPDATE') and public.is_item_locked(new.item_id, v_bill_id) then
+    raise exception 'assignments locked: bill % is closed or item % has a paid portion', v_bill_id, new.item_id;
   end if;
 
   if tg_op = 'DELETE' then

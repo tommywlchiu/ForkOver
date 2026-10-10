@@ -3,12 +3,13 @@
 -- create/edit/delete them, an outsider can't, and an item with any paid portion is locked even
 -- for the payer.
 begin;
-select plan(12);
+select plan(14);
 
 insert into auth.users (id, email) values
   ('d1000000-0000-0000-0000-000000000001', 'payer@items.example'),
   ('d1000000-0000-0000-0000-000000000002', 'member@items.example'),
-  ('d1000000-0000-0000-0000-000000000003', 'outsider@items.example');
+  ('d1000000-0000-0000-0000-000000000003', 'outsider@items.example'),
+  ('d1000000-0000-0000-0000-000000000004', 'guest@items.example');
 
 insert into public.bills (id, payer_user_id, status)
 values ('d2000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', 'open');
@@ -36,6 +37,15 @@ values (
   'd1000000-0000-0000-0000-000000000002',
   'Member',
   'member'
+);
+
+insert into public.bill_people (id, bill_id, user_id, display_name, kind)
+values (
+  'd3000000-0000-0000-0000-000000000004',
+  'd2000000-0000-0000-0000-000000000001',
+  'd1000000-0000-0000-0000-000000000004',
+  'Guest',
+  'guest'
 );
 
 insert into public.bill_items (id, bill_id, name, price_cents, position)
@@ -120,6 +130,21 @@ select throws_ok(
      values ('d2000000-0000-0000-0000-000000000001', 'Sneaky', 100, 2) $$,
   'new row violates row-level security policy for table "bill_items"',
   'a member cannot add an item'
+);
+
+set request.jwt.claim.sub = 'd1000000-0000-0000-0000-000000000004';
+
+select results_eq(
+  $$ select name from public.bill_items where id = 'd4000000-0000-0000-0000-000000000001' $$,
+  $$ values ('Salmon'::text) $$,
+  'a guest can read the item'
+);
+
+select throws_ok(
+  $$ insert into public.bill_items (bill_id, name, price_cents, position)
+     values ('d2000000-0000-0000-0000-000000000001', 'Sneaky', 100, 2) $$,
+  'new row violates row-level security policy for table "bill_items"',
+  'a guest cannot add an item'
 );
 
 set request.jwt.claim.sub = 'd1000000-0000-0000-0000-000000000003';
