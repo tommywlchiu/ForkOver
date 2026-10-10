@@ -9,12 +9,20 @@ export default function AppLayout() {
   const username = useSessionStore((s) => s.username);
   const userId = useSessionStore((s) => s.userId);
 
-  // Registers this device's push token once per sign-in (SPEC 8.7), not on every re-render.
+  // Registers this device's push token once per sign-in (SPEC 8.7), not on every re-render. The
+  // ref is only set on confirmed success, so a transient failure (network blip, a denied
+  // permission prompt) doesn't permanently block retrying for this sign-in - it just waits for
+  // the next render where `userId`/`username` are (still) set.
   const registeredUserId = useRef<string | null>(null);
   useEffect(() => {
     if (!userId || !username || registeredUserId.current === userId) return;
-    registeredUserId.current = userId;
-    registerForPushNotifications(userId);
+    let cancelled = false;
+    registerForPushNotifications(userId).then((ok) => {
+      if (!cancelled && ok) registeredUserId.current = userId;
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [userId, username]);
 
   if (!isSignedIn) return <Redirect href="/sign-in" />;
