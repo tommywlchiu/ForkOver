@@ -22,7 +22,10 @@ export default function Review() {
   const theme = useThemeTokens();
   const { id: billId } = useLocalSearchParams<{ id: string }>();
 
-  const bill = useBillStore((s) => s.bills[billId]);
+  // A scan's draft bill may still be under its pre-promotion local id while this screen is
+  // mounted (SPEC.md section 8, M4): `renamedBillIds` lets it keep resolving to the same bill
+  // once the scan's `done` event promotes it to a real server id (src/state/bill.ts `promote`).
+  const bill = useBillStore((s) => s.bills[billId] ?? s.bills[s.renamedBillIds[billId]]);
   const updateItem = useBillStore((s) => s.updateItem);
   const removeItem = useBillStore((s) => s.removeItem);
   const mergeItems = useBillStore((s) => s.mergeItems);

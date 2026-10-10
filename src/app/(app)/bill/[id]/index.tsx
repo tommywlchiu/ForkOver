@@ -6,13 +6,15 @@
  * buttons are payer controls for M5 and stay out of this screen for now.
  */
 import { Redirect, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Chip } from '../../../../components/Buttons';
+import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
 import { useThemeTokens } from '../../../../components/useThemeTokens';
 import { formatMoney } from '../../../../lib/money/format';
 import { claimStateMeta } from '../../../../lib/theme/tokens';
 import { useBillStore } from '../../../../state/bill';
+import { useConnectivityStore } from '../../../../state/connectivity';
 
 export default function BillScreen() {
   const theme = useThemeTokens();
@@ -25,16 +27,39 @@ export default function BillScreen() {
   const getSplit = useBillStore((s) => s.getSplit);
   const getResolvedItems = useBillStore((s) => s.getResolvedItems);
   const claimFor = useBillStore((s) => s.claimFor);
+  const subscribeToBill = useBillStore((s) => s.subscribeToBill);
+  const refetchBill = useBillStore((s) => s.refetchBill);
+  const syncError = useBillStore((s) => s.syncErrors[billId]);
+  const dismissSyncError = useBillStore((s) => s.dismissSyncError);
+  const isConnected = useConnectivityStore((s) => s.isConnected);
 
   const [activePersonId, setActivePersonId] = useState<string | null>(null);
   const [addingPerson, setAddingPerson] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
+
+  // SPEC 8.3: subscribe to realtime changes for this bill once it's mounted; resubscribing (a
+  // fresh effect run) whenever the bill id itself changes.
+  useEffect(() => {
+    if (!billId) return undefined;
+    const unsubscribe = subscribeToBill(billId);
+    return unsubscribe;
+  }, [billId, subscribeToBill]);
+
+  // SPEC 8.3: "on reconnect, refetch the bill snapshot and resubscribe." The effect above already
+  // resubscribes on remount; reconnecting doesn't remount this screen, so refetch explicitly here.
+  const wasConnected = useRef(isConnected);
+  useEffect(() => {
+    if (isConnected && !wasConnected.current && billId) void refetchBill(billId);
+    wasConnected.current = isConnected;
+  }, [isConnected, billId, refetchBill]);
 
   const split = bill ? getSplit(bill.id) : null;
   const resolvedItems = bill ? getResolvedItems(bill.id) : [];
   const resolvedById = new Map(resolvedItems.map((r) => [r.itemId, r]));
 
   if (!bill) return <Redirect href="/" />;
+
+  const controlsDisabled = !isConnected;
 
   const selectedPersonId = activePersonId ?? bill.payerId;
   const peopleById = new Map(bill.people.map((p) => [p.id, p.name]));
@@ -43,6 +68,18 @@ export default function BillScreen() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
+      <NoConnectionBanner />
+      {syncError && (
+        <Text
+          testID="bill-sync-error"
+          accessibilityLiveRegion="assertive"
+          onPress={() => dismissSyncError(bill.id)}
+          style={{ color: theme.danger, paddingVertical: 6 }}
+        >
+          {syncError}
+        </Text>
+      )}
+
       <Text style={[styles.title, { color: theme.text }]}>{bill.title}</Text>
       <Text style={{ color: theme.textMuted, marginBottom: 12 }}>Claiming as:</Text>
 
@@ -60,6 +97,7 @@ export default function BillScreen() {
           testID="add-person-button"
           label="+ Add person"
           selected={addingPerson}
+          disabled={controlsDisabled}
           onPress={() => setAddingPerson((v) => !v)}
         />
       </View>
@@ -73,13 +111,16 @@ export default function BillScreen() {
             placeholder="Name"
             placeholderTextColor={theme.textMuted}
             accessibilityLabel="New person's name"
+            editable={!controlsDisabled}
             style={[styles.nameInput, { color: theme.text, borderColor: theme.border }]}
           />
           <Text
             testID="confirm-add-person-button"
             accessibilityRole="button"
             accessibilityLabel="Add this person"
+            accessibilityState={{ disabled: controlsDisabled }}
             onPress={() => {
+              if (controlsDisabled) return;
               const trimmed = newPersonName.trim();
               if (trimmed) {
                 const id = addPerson(bill.id, trimmed);
@@ -88,7 +129,7 @@ export default function BillScreen() {
                 setAddingPerson(false);
               }
             }}
-            style={{ color: theme.primary, paddingHorizontal: 8 }}
+            style={{ color: controlsDisabled ? theme.textMuted : theme.primary, paddingHorizontal: 8 }}
           >
             Add
           </Text>
@@ -122,6 +163,7 @@ export default function BillScreen() {
               testID={`claim-item-${item.id}`}
               label="Mine"
               selected={mode === 'mine'}
+              disabled={controlsDisabled}
               accessibilityLabel={`Claim ${item.name} as mine`}
               onPress={() => toggleMine(bill.id, item.id, selectedPersonId)}
             />
@@ -129,6 +171,7 @@ export default function BillScreen() {
               testID={`share-item-${item.id}`}
               label="Share"
               selected={mode === 'shared'}
+              disabled={controlsDisabled}
               accessibilityLabel={`Claim ${item.name} as shared`}
               onPress={() => toggleShared(bill.id, item.id, selectedPersonId)}
             />
