@@ -38,6 +38,11 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   receipt" worked example (payer a, b owes 3599, c owes 2253); claiming it the same way through the
   Bill screen reproduces those exact totals, which is what `src/integration/paymentFlow.test.tsx`
   and `scripts/measure-scan-latency.ts` both rely on.
+- `src/data/pushTokens.ts`'s `registerForPushNotifications` runs once per sign-in from
+  `src/app/(app)/_layout.tsx` and upserts the device's Expo push token into `push_tokens` (SPEC
+  8.1/8.7). It no-ops (web, simulators/emulators) and never throws; it also no-ops until an EAS
+  project exists (no `projectId` configured yet in `app.json`/`eas.json`), which `notify` (a later
+  M4 task) needs to actually send anything.
 
 ## Working rules
 
