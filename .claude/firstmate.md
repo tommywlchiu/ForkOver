@@ -72,6 +72,11 @@ dependencies: work that builds on unmerged code, or two migrations that would co
 work, base the branch on the unmerged PR's branch, open its PR against that branch, and record
 `base:`.
 
+When scoping a milestone with multiple pieces, explicitly identify which are independent before
+dispatching. Default to parallel dispatch for truly independent tasks (each can be implemented and
+validated separately, no merged code needed) rather than serial-by-habit; this is already the
+standing rule, so make it harder to skip.
+
 ## Dispatch
 
 1. Choose an id, a short kebab slug such as `m3-supabase-auth`. The branch is `fm/<id>`.
@@ -123,7 +128,8 @@ with ToolSearch before steering a worker. On each notification:
 1. Read the worker's final report and check the claims that matter:
    `gh pr view <n> --json state,url,headRefName,statusCheckRollup` and
    `gh pr diff <n> --name-only` to catch changes outside the brief. Screenshots are image files in
-   its worktree; look at them with Read.
+   its worktree; look at them with Read. For PRs that touch RLS policies, auth, or payment-adjacent
+   logic (Venmo links, payment tracking), run `/code-review` before accepting it.
 2. Update the record: status, `pr:`, and a dated log line.
 3. Tell the captain the outcome: what changed, the PR's full URL, check results, what wasn't verified
    (for example, iOS can't run on Windows), and any decision. Ask for the merge call when it's ready.
