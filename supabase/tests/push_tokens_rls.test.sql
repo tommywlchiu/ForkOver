@@ -1,15 +1,17 @@
 -- pgTAP coverage for the `push_tokens` RLS policy and the `register_push_token` RPC (SPEC.md
--- 8.1/8.2, AGENTS.md "every policy has a pgTAP test"): a signed-in user can upsert and read their
--- own row(s); another signed-in user can't read, insert, update, or delete them; and the RPC
--- reassigns a token that already belongs to someone else instead of raising or no-op'ing.
+-- 8.1/8.2, AGENTS.md "every policy has a pgTAP test"): a signed-in user can insert, read, update,
+-- and delete their own row(s) directly against the table (not just through the SECURITY DEFINER
+-- RPC, which bypasses RLS and so proves nothing about the policies themselves); another signed-in
+-- user can't read, insert, update, or delete them; and the RPC reassigns a token that already
+-- belongs to someone else instead of raising or no-op'ing.
 begin;
-select plan(10);
+select plan(15);
 
 insert into auth.users (id, email) values
   ('55555555-5555-5555-5555-555555555555', 'owner@example.com'),
   ('66666666-6666-6666-6666-666666666666', 'intruder@example.com');
 
--- Acting as the owner: can insert their own token row.
+-- Acting as the owner: can insert, read, update, and delete their own row(s) directly.
 set role authenticated;
 set request.jwt.claim.sub = '55555555-5555-5555-5555-555555555555';
 
@@ -25,7 +27,36 @@ select results_eq(
   'owner can read their own push token row'
 );
 
--- Acting as the intruder: the owner's row is invisible and unreachable, by any of the four verbs.
+select lives_ok(
+  $$ update public.push_tokens set platform = 'android'
+     where token = 'ExponentPushToken[owner-device-1]' $$,
+  'owner can update their own push token row directly (push_tokens_update_own''s allow case)'
+);
+
+select results_eq(
+  $$ select platform from public.push_tokens where token = 'ExponentPushToken[owner-device-1]' $$,
+  $$ values ('android'::text) $$,
+  'the owner''s direct update actually took effect'
+);
+
+select lives_ok(
+  $$ insert into public.push_tokens (user_id, token, platform)
+     values ('55555555-5555-5555-5555-555555555555', 'ExponentPushToken[owner-device-2]', 'ios') $$,
+  'owner can insert a second push token row (a second device)'
+);
+
+select lives_ok(
+  $$ delete from public.push_tokens where token = 'ExponentPushToken[owner-device-2]' $$,
+  'owner can delete their own push token row directly (push_tokens_delete_own''s allow case)'
+);
+
+select is_empty(
+  $$ select 1 from public.push_tokens where token = 'ExponentPushToken[owner-device-2]' $$,
+  'the owner''s direct delete actually took effect'
+);
+
+-- Acting as the intruder: the owner's remaining row is invisible and unreachable, by any of the
+-- four verbs.
 set request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
 
 select is_empty(
@@ -41,7 +72,7 @@ select throws_ok(
 );
 
 select is_empty(
-  $$ update public.push_tokens set platform = 'android'
+  $$ update public.push_tokens set platform = 'ios'
      where user_id = '55555555-5555-5555-5555-555555555555'
      returning platform $$,
   'intruder cannot update another user''s push token row'
