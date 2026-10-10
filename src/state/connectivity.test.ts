@@ -1,55 +1,122 @@
 /**
  * Tests for connectivity state (SPEC.md section 8.3, M4 NFR-8).
  *
- * Tests getInitialConnectedState() function and store behavior.
+ * Uses jest.resetModules() + jest.doMock() + require() pattern per test to
+ * actually exercise different platform conditions and initial states.
  */
-import { useConnectivityStore } from './connectivity';
 
-// Mock Platform to return 'web' for most tests
-jest.mock('react-native', () => ({
-  Platform: {
-    OS: 'web',
-  },
-}));
-
-describe('useConnectivityStore - web platform', () => {
-  const originalOnLine = navigator.onLine;
-
+describe('useConnectivityStore - web platform reads navigator.onLine at load', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetModules();
   });
 
-  afterEach(() => {
-    // Restore original onLine value
-    Object.defineProperty(navigator, 'onLine', {
-      configurable: true,
-      writable: true,
-      value: originalOnLine,
-    });
-  });
-
-  it('reads navigator.onLine during store initialization', () => {
-    // On web, the store should initialize with the correct navigator.onLine value
+  it('initializes isConnected = true when navigator.onLine is true at load', () => {
+    // Set navigator.onLine = true BEFORE importing the module
     Object.defineProperty(navigator, 'onLine', {
       configurable: true,
       writable: true,
       value: true,
     });
 
+    jest.doMock('react-native', () => ({ Platform: { OS: 'web' } }));
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useConnectivityStore } = require('./connectivity');
     const state = useConnectivityStore.getState();
 
     expect(state.isInitialized).toBe(true);
-    expect(state.isConnected).toBe(true); // Should match navigator.onLine
+    expect(state.isConnected).toBe(true);
   });
 
-  it('has methods available', () => {
+  it('initializes isConnected = false when navigator.onLine is false at load', () => {
+    // Set navigator.onLine = false BEFORE importing the module
+    Object.defineProperty(navigator, 'onLine', {
+      configurable: true,
+      writable: true,
+      value: false,
+    });
+
+    jest.doMock('react-native', () => ({ Platform: { OS: 'web' } }));
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useConnectivityStore } = require('./connectivity');
     const state = useConnectivityStore.getState();
 
-    expect(state.checkConnection).toBeDefined();
-    expect(typeof state.checkConnection).toBe('function');
+    expect(state.isInitialized).toBe(true);
+    expect(state.isConnected).toBe(false); // Correctly reflects offline state at load
+  });
+});
+
+describe('useConnectivityStore - native platform async initialization', () => {
+  beforeEach(() => {
+    jest.resetModules();
   });
 
-  it('can check connection via checkConnection method', async () => {
+  it('starts uninitialized on native and completes initialization', async () => {
+    jest.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+    jest.doMock('@react-native-community/netinfo', () => ({
+      default: {
+        addEventListener: jest.fn(() => jest.fn()),
+        fetch: jest.fn().mockResolvedValue({
+          isConnected: true,
+          isInternetReachable: true,
+        }),
+      },
+    }));
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useConnectivityStore } = require('./connectivity');
+
+    // Initial state: not initialized yet (waiting for async NetInfo load)
+    let state = useConnectivityStore.getState();
+    expect(state.isInitialized).toBe(false);
+
+    // Flush async operations
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // After async initialization completes
+    state = useConnectivityStore.getState();
+    expect(state.isInitialized).toBe(true);
+    expect(state.isConnected).toBe(true);
+  });
+
+  it('marks initialized even if NetInfo fails to load', async () => {
+    jest.doMock('react-native', () => ({ Platform: { OS: 'android' } }));
+    jest.doMock(
+      '@react-native-community/netinfo',
+      () => {
+        throw new Error('NetInfo not available');
+      },
+      { virtual: true },
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useConnectivityStore } = require('./connectivity');
+
+    // Initial state: not initialized
+    let state = useConnectivityStore.getState();
+    expect(state.isInitialized).toBe(false);
+
+    // Flush async operations
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Should mark initialized even on failure
+    state = useConnectivityStore.getState();
+    expect(state.isInitialized).toBe(true);
+  });
+});
+
+describe('useConnectivityStore - checkConnection method', () => {
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  it('works on web platform', async () => {
+    jest.doMock('react-native', () => ({ Platform: { OS: 'web' } }));
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useConnectivityStore } = require('./connectivity');
+
     Object.defineProperty(navigator, 'onLine', {
       configurable: true,
       writable: true,
@@ -58,60 +125,46 @@ describe('useConnectivityStore - web platform', () => {
 
     await useConnectivityStore.getState().checkConnection();
     const state = useConnectivityStore.getState();
-
-    expect(state.isConnected).toBe(false);
-  });
-
-  it('can update connectivity state manually', () => {
-    useConnectivityStore.setState({ isConnected: false });
-    let state = useConnectivityStore.getState();
     expect(state.isConnected).toBe(false);
 
-    useConnectivityStore.setState({ isConnected: true });
-    state = useConnectivityStore.getState();
-    expect(state.isConnected).toBe(true);
+    Object.defineProperty(navigator, 'onLine', {
+      configurable: true,
+      writable: true,
+      value: true,
+    });
+
+    await useConnectivityStore.getState().checkConnection();
+    const newState = useConnectivityStore.getState();
+    expect(newState.isConnected).toBe(true);
   });
 
-  it('can update initialization state', () => {
-    useConnectivityStore.setState({ isInitialized: false });
-    let state = useConnectivityStore.getState();
-    expect(state.isInitialized).toBe(false);
+  it('has checkConnection method callable on native (after async init)', async () => {
+    jest.doMock('react-native', () => ({ Platform: { OS: 'ios' } }));
+    jest.doMock('@react-native-community/netinfo', () => ({
+      default: {
+        addEventListener: jest.fn(() => jest.fn()),
+        fetch: jest.fn().mockResolvedValue({
+          isConnected: true,
+          isInternetReachable: true,
+        }),
+      },
+    }));
 
-    useConnectivityStore.setState({ isInitialized: true });
-    state = useConnectivityStore.getState();
-    expect(state.isInitialized).toBe(true);
-  });
-});
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useConnectivityStore } = require('./connectivity');
 
-describe('useConnectivityStore - module structure', () => {
-  it('module loads without errors', () => {
-    // The connectivity module should have loaded successfully
-    // useConnectivityStore is imported at the top, so this just verifies it's defined
-    expect(useConnectivityStore).toBeDefined();
-    expect(typeof useConnectivityStore.getState).toBe('function');
-  });
-});
+    // checkConnection method should exist
+    const checkConnection = useConnectivityStore.getState().checkConnection;
+    expect(typeof checkConnection).toBe('function');
 
-describe('useConnectivityStore - async native initialization', () => {
-  it('initializes asynchronously on native platforms', async () => {
-    // The connectivity module includes async native initialization
-    // On web (current test env), isInitialized is set to true immediately
-    // On native, it waits for NetInfo to load
-
-    // Store should be functional after creation
-    const state = useConnectivityStore.getState();
-    expect(state).toBeDefined();
-    expect('isConnected' in state).toBe(true);
-    expect('isInitialized' in state).toBe(true);
-
-    // The async initializer should have been started
-    // On web (current test env), it should be a no-op that completes quickly
+    // Flush async setup
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Store should still be functional
-    const finalState = useConnectivityStore.getState();
-    expect(finalState).toBeDefined();
-    expect('isConnected' in finalState).toBe(true);
-    expect('isInitialized' in finalState).toBe(true);
+    // Should be able to call checkConnection without error
+    const checkConnectionResult = useConnectivityStore.getState().checkConnection();
+    expect(checkConnectionResult instanceof Promise).toBe(true);
+
+    // Wait for it to complete
+    await checkConnectionResult;
   });
 });

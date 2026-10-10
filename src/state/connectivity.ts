@@ -65,8 +65,8 @@ export const useConnectivityStore = create<ConnectivityState>((set) => {
 
 /** Set up native connectivity listener after NetInfo loads (async). */
 async function initializeNativeConnectivity() {
-  if (Platform.OS === 'web' || typeof jest !== 'undefined') {
-    return; // Skip on web or in tests
+  if (Platform.OS === 'web') {
+    return; // Skip on web
   }
 
   try {
