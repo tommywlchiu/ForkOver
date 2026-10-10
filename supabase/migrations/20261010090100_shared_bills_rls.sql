@@ -79,14 +79,43 @@ as $$
     or exists (select 1 from public.payments p where p.item_id = p_item_id);
 $$;
 
+-- Shared by the claims/assignments/payments consistency guards below: does this item/person
+-- really belong to this bill? `bill_id` is denormalized onto all three tables for the realtime
+-- filter (SPEC 8.3) and is otherwise just another client-writable column, so each guard has to
+-- check it against the real source of truth (`bill_items`/`bill_people`) rather than trust it.
+create function public.is_item_on_bill(p_item_id uuid, p_bill_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.bill_items bi where bi.id = p_item_id and bi.bill_id = p_bill_id
+  );
+$$;
+
+create function public.is_person_on_bill(p_person_id uuid, p_bill_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.bill_people bp where bp.id = p_person_id and bp.bill_id = p_bill_id
+  );
+$$;
+
 -- --- bills ------------------------------------------------------------------------------------
 
 create policy "bills_select_members" on public.bills
   for select
   using (public.is_bill_member(id));
 
--- Payer only: bill status and the receipt-level fields (title, tip, discount/tax, etc). Creating
--- a bill stays service-role only (the parse-receipt function), as in M3.
+-- Payer only: bill status and the receipt-level fields (title, tip, discount/tax, etc), until the
+-- bill is closed - see `guard_bills_closed_lock` below, which is what actually enforces that
+-- "until". Creating a bill stays service-role only (the parse-receipt function), as in M3.
 create policy "bills_update_payer" on public.bills
   for update
   using (public.is_bill_payer(id))
@@ -121,10 +150,16 @@ create trigger bills_immutable_fields_guard
   before update on public.bills
   for each row execute function public.guard_bills_immutable_fields();
 
--- SPEC 8.5: "Closed bills are read-only except payment marks." Once a bill is closed, the payer
--- can still close/re-save it (status, sent_at, closed_at) and cosmetic fields (title,
--- merchant_name), but not the fields that feed the split math - changing any of these on a
--- closed bill would silently alter everyone's already-settled share.
+-- SPEC 8.5: "Closed bills are read-only except payment marks." An earlier version of this guard
+-- enumerated just the money-affecting columns (tax_cents, discount_cents, tip, currency) - but
+-- that list is exactly the kind of thing a later change can extend the table without extending,
+-- and it missed the worst case: `status` itself wasn't on it, so the payer could flip a closed
+-- bill back to 'open' in one statement, freely edit anything in a second statement (every other
+-- lock - bill_items/bill_fees/claims/assignments - keys off `is_bill_closed`, which reads this
+-- same `status` column), then flip it closed again. The fix isn't a longer list: once closed, a
+-- bill is simply read-only, full stop, with no payer-editable column at all - `status` included.
+-- Payment marks stay unaffected because they live in the separate `payments` table, which this
+-- trigger never touches.
 create function public.guard_bills_closed_lock()
 returns trigger
 language plpgsql
@@ -132,14 +167,17 @@ security definer
 set search_path = public
 as $$
 begin
-  if old.status = 'closed' and (
-    new.discount_cents is distinct from old.discount_cents
-    or new.tax_cents is distinct from old.tax_cents
-    or new.tip is distinct from old.tip
-    or new.currency is distinct from old.currency
-  ) then
+  if old.status = 'closed' then
     raise exception 'bills locked: bill % is closed', old.id;
   end if;
+
+  -- Derive closed_at from the transition itself, rather than trusting whatever the caller sent,
+  -- so `status` and `closed_at` can't independently drift out of sync (the canonical "is this
+  -- bill closed" check is always `status = 'closed', everywhere else in this migration).
+  if new.status = 'closed' and old.status is distinct from 'closed' then
+    new.closed_at = now();
+  end if;
+
   return new;
 end;
 $$;
@@ -166,7 +204,9 @@ create policy "bill_people_insert_named_by_payer" on public.bill_people
 
 create policy "bill_people_update_named_by_payer" on public.bill_people
   for update
-  using (kind = 'named' and public.is_bill_payer(bill_id))
+  using (
+    kind = 'named' and public.is_bill_payer(bill_id) and not public.is_bill_closed(bill_id)
+  )
   with check (
     kind = 'named' and public.is_bill_payer(bill_id) and not public.is_bill_closed(bill_id)
   );
@@ -344,19 +384,13 @@ declare
   v_bill_id uuid := coalesce(new.bill_id, old.bill_id);
 begin
   if tg_op in ('INSERT', 'UPDATE') then
-    if not exists (
-      select 1 from public.bill_items bi where bi.id = new.item_id and bi.bill_id = new.bill_id
-    ) then
+    if not public.is_item_on_bill(new.item_id, new.bill_id) then
       raise exception 'claims.bill_id does not match the item''s bill';
     end if;
-    if not exists (
-      select 1 from public.bill_people bp where bp.id = new.person_id and bp.bill_id = new.bill_id
-    ) then
+    if not public.is_person_on_bill(new.person_id, new.bill_id) then
       raise exception 'claims.bill_id does not match the person''s bill';
     end if;
-    if not exists (
-      select 1 from public.bill_people bp where bp.id = new.created_by and bp.bill_id = new.bill_id
-    ) then
+    if not public.is_person_on_bill(new.created_by, new.bill_id) then
       raise exception 'claims.created_by does not belong to this bill';
     end if;
     -- `created_by` records who actually made the claim; the RLS policy already restricts who can
@@ -421,18 +455,13 @@ declare
   v_bill_id uuid := coalesce(new.bill_id, old.bill_id);
 begin
   if tg_op in ('INSERT', 'UPDATE') then
-    if not exists (
-      select 1 from public.bill_items bi where bi.id = new.item_id and bi.bill_id = new.bill_id
-    ) then
+    if not public.is_item_on_bill(new.item_id, new.bill_id) then
       raise exception 'assignments.bill_id does not match the item''s bill';
     end if;
     if exists (
       select 1
       from unnest(new.assigned_to) as assignee_id
-      where not exists (
-        select 1 from public.bill_people bp
-        where bp.id = assignee_id and bp.bill_id = new.bill_id
-      )
+      where not public.is_person_on_bill(assignee_id, new.bill_id)
     ) then
       raise exception 'assignments.assigned_to contains a person not on this bill';
     end if;
@@ -463,18 +492,20 @@ create policy "payments_insert_payer" on public.payments
   for insert
   with check (public.is_bill_payer(bill_id));
 
-create policy "payments_update_payer" on public.payments
-  for update
-  using (public.is_bill_payer(bill_id))
-  with check (public.is_bill_payer(bill_id));
-
 create policy "payments_delete_payer" on public.payments
   for delete
   using (public.is_bill_payer(bill_id));
 
--- No closed-bill or lock trigger here: FR-25 explicitly allows payment changes on closed bills,
--- and payments are what the item/claim/assignment locks key off of. Still guard the same
--- `bill_id` spoofing risk as claims/assignments.
+-- No UPDATE policy: the app only ever inserts a payment (mark) or deletes one (unmark);
+-- `marked_at` is never edited in place. Dropping UPDATE here removes attack surface nothing
+-- uses, rather than leaving an untested, unused capability around.
+--
+-- No closed-bill or lock trigger here either: FR-25 explicitly allows payment changes on closed
+-- bills, and payments are what the item/claim/assignment locks key off of. Still guard the same
+-- `bill_id` spoofing risk as claims/assignments, and (unlike those, which key a claim/assignment
+-- by `person_id`/array) make `item_id`/`person_id` immutable after creation: `is_item_locked`
+-- decides whether an item is "paid" by whether a payments row with that `item_id` exists, so
+-- reassigning an existing payment's `item_id` would silently unlock the item it used to cover.
 create function public.guard_payment_consistency()
 returns trigger
 language plpgsql
@@ -482,14 +513,16 @@ security definer
 set search_path = public
 as $$
 begin
-  if not exists (
-    select 1 from public.bill_items bi where bi.id = new.item_id and bi.bill_id = new.bill_id
+  if tg_op = 'UPDATE' and (
+    new.item_id is distinct from old.item_id or new.person_id is distinct from old.person_id
   ) then
+    raise exception 'payments.item_id and payments.person_id cannot be changed after creation';
+  end if;
+
+  if not public.is_item_on_bill(new.item_id, new.bill_id) then
     raise exception 'payments.bill_id does not match the item''s bill';
   end if;
-  if not exists (
-    select 1 from public.bill_people bp where bp.id = new.person_id and bp.bill_id = new.bill_id
-  ) then
+  if not public.is_person_on_bill(new.person_id, new.bill_id) then
     raise exception 'payments.bill_id does not match the person''s bill';
   end if;
   return new;
@@ -506,6 +539,16 @@ create trigger payments_consistency_guard
 -- their existing row. `security definer` because the caller has no `bill_people` row yet, so
 -- without it `bill_people_insert_named_by_payer` (the only insert policy) would always reject
 -- them. The payer never needs this: `handle_new_bill` already gave them a `bill_people` row.
+--
+-- Known limitation (a spec gap, not just a code one): if the payer already added this same real
+-- person as a named placeholder (e.g. "Alex, phone died") and that person later opens the share
+-- link and signs in, this creates a *second*, separate `bill_people` row for them rather than
+-- reusing the first - `unique (bill_id, user_id)` only dedupes a `user_id` against itself, and
+-- there's no reliable signal here (no email/phone on a named row) to match the new signed-in
+-- identity back to the old placeholder. Their claims end up split across two identities with no
+-- reconciliation. Left unsolved deliberately: merging identities after the fact is messy and is
+-- arguably an M5 "payer controls" concern once there's a UI to resolve it, rather than something
+-- to guess at silently here.
 create function public.join_bill(p_share_token text, p_display_name text)
 returns public.bill_people
 language plpgsql

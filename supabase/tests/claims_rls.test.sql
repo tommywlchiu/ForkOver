@@ -3,7 +3,7 @@
 -- claims for someone else, an outsider can't read claims, and claim changes are rejected once the
 -- bill is closed, the item has a payment, or `bill_id` doesn't match the item/person it names.
 begin;
-select plan(10);
+select plan(12);
 
 insert into auth.users (id, email) values
   ('f1000000-0000-0000-0000-000000000001', 'payer@claims.example'),
@@ -108,6 +108,26 @@ select is_empty(
        and person_id = 'f3000000-0000-0000-0000-000000000002'
      returning 1 $$,
   'member C cannot delete member B''s claim'
+);
+
+-- The allow paths for claims_delete_self_or_payer, contrasted with the deny case above: the
+-- owner deletes their own claim, and the payer deletes someone else's.
+set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000002';
+
+select lives_ok(
+  $$ delete from public.claims
+     where item_id = 'f4000000-0000-0000-0000-000000000001'
+       and person_id = 'f3000000-0000-0000-0000-000000000002' $$,
+  'member B can delete their own claim'
+);
+
+set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000001';
+
+select lives_ok(
+  $$ delete from public.claims
+     where item_id = 'f4000000-0000-0000-0000-000000000001'
+       and person_id = 'f3000000-0000-0000-0000-000000000003' $$,
+  'the payer can delete someone else''s claim'
 );
 
 set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000004';

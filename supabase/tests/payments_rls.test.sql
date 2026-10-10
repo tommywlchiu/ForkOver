@@ -3,7 +3,7 @@
 -- payer can read them, an outsider can't, payments are allowed even on a closed bill, and a
 -- spoofed `bill_id` is rejected.
 begin;
-select plan(8);
+select plan(12);
 
 insert into auth.users (id, email) values
   ('b5000000-0000-0000-0000-000000000001', 'payer@pay.example'),
@@ -76,6 +76,55 @@ select lives_ok(
        and person_id = 'b7000000-0000-0000-0000-000000000002' $$,
   'the payer can unmark a payment'
 );
+
+-- Re-mark it so the next two checks (non-payer delete denied, no UPDATE policy at all) have a
+-- row to target.
+select lives_ok(
+  $$ insert into public.payments (item_id, person_id, bill_id)
+     values (
+       'b8000000-0000-0000-0000-000000000001', 'b7000000-0000-0000-0000-000000000002',
+       'b6000000-0000-0000-0000-000000000001'
+     ) $$,
+  'the payer can re-mark the payment'
+);
+
+set request.jwt.claim.sub = 'b5000000-0000-0000-0000-000000000002';
+
+select is_empty(
+  $$ delete from public.payments
+     where item_id = 'b8000000-0000-0000-0000-000000000001'
+       and person_id = 'b7000000-0000-0000-0000-000000000002'
+     returning 1 $$,
+  'a non-payer member cannot unmark a payment'
+);
+
+set request.jwt.claim.sub = 'b5000000-0000-0000-0000-000000000001';
+
+-- There's no UPDATE policy on payments at all (the app only ever inserts/deletes to mark/
+-- unmark; marked_at is never edited in place) - not even the payer can update one.
+select is_empty(
+  $$ update public.payments set marked_at = now()
+     where item_id = 'b8000000-0000-0000-0000-000000000001'
+       and person_id = 'b7000000-0000-0000-0000-000000000002'
+     returning 1 $$,
+  'not even the payer can update a payment (no update policy exists)'
+);
+
+-- The trigger-level immutability guard is defense in depth below RLS (which already blocks this
+-- for every real caller via the missing UPDATE policy above); check it fires for every role,
+-- same as every other guard trigger in this migration, by running it as the service role.
+reset role;
+
+select throws_ok(
+  $$ update public.payments set item_id = 'b8000000-0000-0000-0000-000000000002'
+     where item_id = 'b8000000-0000-0000-0000-000000000001'
+       and person_id = 'b7000000-0000-0000-0000-000000000002' $$,
+  'payments.item_id and payments.person_id cannot be changed after creation',
+  'reassigning a payment to a different item is rejected, even for the service role'
+);
+
+set role authenticated;
+set request.jwt.claim.sub = 'b5000000-0000-0000-0000-000000000001';
 
 -- FR-25: payment changes are still allowed on a closed bill (unlike claims/assignments).
 select lives_ok(

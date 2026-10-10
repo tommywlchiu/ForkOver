@@ -3,7 +3,7 @@
 -- guest, joining again returns the same row, closed bills reject joining, and only the payer can
 -- add or edit a named person directly.
 begin;
-select plan(14);
+select plan(18);
 
 insert into auth.users (id, email) values
   ('c1000000-0000-0000-0000-000000000001', 'payer@people.example'),
@@ -109,6 +109,22 @@ select lives_ok(
   'the payer can edit a named person'
 );
 
+-- A named person is explicitly "someone without the app": they never ran join_bill, so a real
+-- user_id on a 'named' row would silently grant that profile bill access and claim-edit rights
+-- they never consented to. Blocked at the schema layer (a CHECK constraint), not just in the
+-- policy, so it holds regardless of insert path.
+select throws_ok(
+  $$ insert into public.bill_people (bill_id, user_id, display_name, kind)
+     values (
+       'c2000000-0000-0000-0000-000000000001',
+       'c1000000-0000-0000-0000-000000000002',
+       'Sneaky Named',
+       'named'
+     ) $$,
+  'new row for relation "bill_people" violates check constraint "bill_people_named_has_no_user"',
+  'a named person cannot carry a real user_id'
+);
+
 -- bill_id is immutable after creation, even for the payer moving a named person between two
 -- bills they own.
 select throws_ok(
@@ -144,7 +160,38 @@ select is_empty(
   'a non-payer member cannot edit a named person'
 );
 
+-- SPEC 8.2 only gives the payer an update policy on bill_people (for named rows); a member or
+-- guest has no self-service rename, even on their own row - the member is still signed in as
+-- themselves here, updating their own row by id.
+select is_empty(
+  $$ update public.bill_people set display_name = 'New Name'
+     where bill_id = 'c2000000-0000-0000-0000-000000000001'
+       and user_id = 'c1000000-0000-0000-0000-000000000002'
+     returning display_name $$,
+  'a member cannot rename themselves'
+);
+
+-- There's no delete policy on bill_people at all.
+select is_empty(
+  $$ delete from public.bill_people
+     where bill_id = 'c2000000-0000-0000-0000-000000000001'
+       and user_id = 'c1000000-0000-0000-0000-000000000002'
+     returning 1 $$,
+  'a member cannot delete their own bill_people row (no delete policy exists)'
+);
+
+set request.jwt.claim.sub = 'c1000000-0000-0000-0000-000000000001';
+
+select is_empty(
+  $$ delete from public.bill_people
+     where id = 'c3000000-0000-0000-0000-000000000001'
+     returning 1 $$,
+  'even the payer cannot delete a bill_people row (no delete policy exists)'
+);
+
 -- Membership read.
+set request.jwt.claim.sub = 'c1000000-0000-0000-0000-000000000002';
+
 select results_eq(
   $$ select count(*)::int from public.bill_people where bill_id = 'c2000000-0000-0000-0000-000000000001' $$,
   $$ values (4) $$,

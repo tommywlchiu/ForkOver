@@ -3,7 +3,7 @@
 -- create/edit/delete them, an outsider can't read them at all, and fees are locked once the bill
 -- is closed since they feed the split math directly.
 begin;
-select plan(10);
+select plan(12);
 
 insert into auth.users (id, email) values
   ('e1000000-0000-0000-0000-000000000001', 'payer@fees.example'),
@@ -80,6 +80,25 @@ select throws_ok(
   'bill_fees.bill_id cannot be changed after creation',
   'moving a fee to another bill is rejected'
 );
+
+-- Like every sibling money column, cents can't go negative.
+select throws_ok(
+  $$ insert into public.bill_fees (bill_id, label, cents, split)
+     values ('e2000000-0000-0000-0000-000000000001', 'Negative', -100, 'equal') $$,
+  'new row for relation "bill_fees" violates check constraint "bill_fees_cents_check"',
+  'a negative fee amount is rejected'
+);
+
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';
+
+select is_empty(
+  $$ delete from public.bill_fees
+     where id = 'e4000000-0000-0000-0000-000000000001'
+     returning 1 $$,
+  'a non-payer member cannot delete a fee'
+);
+
+set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
 
 select lives_ok(
   $$ delete from public.bill_fees where id = 'e4000000-0000-0000-0000-000000000001' $$,
