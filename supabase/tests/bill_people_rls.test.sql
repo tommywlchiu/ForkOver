@@ -3,7 +3,7 @@
 -- guest, joining again returns the same row, closed bills reject joining, and only the payer can
 -- add or edit a named person directly.
 begin;
-select plan(12);
+select plan(13);
 
 insert into auth.users (id, email) values
   ('c1000000-0000-0000-0000-000000000001', 'payer@people.example'),
@@ -107,6 +107,15 @@ select lives_ok(
   $$ update public.bill_people set display_name = 'Pat'
      where id = 'c3000000-0000-0000-0000-000000000001' $$,
   'the payer can edit a named person'
+);
+
+-- bill_id is immutable after creation, even for the payer moving a named person between two
+-- bills they own.
+select throws_ok(
+  $$ update public.bill_people set bill_id = 'c2000000-0000-0000-0000-000000000002'
+     where id = 'c3000000-0000-0000-0000-000000000001' $$,
+  'bill_people.bill_id cannot be changed after creation',
+  'moving a named person to another bill is rejected'
 );
 
 set request.jwt.claim.sub = 'c1000000-0000-0000-0000-000000000002';

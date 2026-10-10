@@ -1,7 +1,7 @@
 -- pgTAP coverage for `bills`' M4 policies (SPEC.md 8.2 "Membership" and "Payer only"):
 -- payer and member can read a bill, an outsider can't, and only the payer can update it.
 begin;
-select plan(7);
+select plan(9);
 
 insert into auth.users (id, email) values
   ('b1000000-0000-0000-0000-000000000001', 'payer@bills.example'),
@@ -48,6 +48,24 @@ select results_eq(
 select lives_ok(
   $$ update public.bills set title = 'Dinner' where id = 'b2000000-0000-0000-0000-000000000001' $$,
   'payer can update their own bill'
+);
+
+-- The payer can change bill status/receipt-level fields, but not identity/addressing fields:
+-- payer_user_id (would hand the bill to someone else) or share_token (would regenerate the
+-- public link). RLS alone can't restrict which columns an UPDATE touches, so this is enforced by
+-- bills_immutable_fields_guard.
+select throws_ok(
+  $$ update public.bills set payer_user_id = 'b1000000-0000-0000-0000-000000000002'
+     where id = 'b2000000-0000-0000-0000-000000000001' $$,
+  'bills.payer_user_id cannot be changed',
+  'the payer cannot transfer the bill to someone else'
+);
+
+select throws_ok(
+  $$ update public.bills set share_token = 'stolen-link'
+     where id = 'b2000000-0000-0000-0000-000000000001' $$,
+  'bills.share_token cannot be changed',
+  'the payer cannot regenerate the share_token'
 );
 
 set request.jwt.claim.sub = 'b1000000-0000-0000-0000-000000000002';

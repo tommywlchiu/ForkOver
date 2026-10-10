@@ -2,7 +2,7 @@
 -- member can read fees, only the payer can create/edit/delete them, and an outsider can't read
 -- them at all.
 begin;
-select plan(7);
+select plan(8);
 
 insert into auth.users (id, email) values
   ('e1000000-0000-0000-0000-000000000001', 'payer@fees.example'),
@@ -11,6 +11,10 @@ insert into auth.users (id, email) values
 
 insert into public.bills (id, payer_user_id, status)
 values ('e2000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'open');
+
+-- A second bill the same payer owns, for the bill_id-immutability test.
+insert into public.bills (id, payer_user_id, status)
+values ('e2000000-0000-0000-0000-000000000002', 'e1000000-0000-0000-0000-000000000001', 'open');
 
 insert into public.bill_people (id, bill_id, user_id, display_name, kind)
 values (
@@ -48,6 +52,14 @@ select lives_ok(
 select lives_ok(
   $$ update public.bill_fees set cents = 550 where id = 'e4000000-0000-0000-0000-000000000001' $$,
   'the payer can edit a fee'
+);
+
+-- bill_id is immutable after creation, even for the payer moving a fee between two bills they own.
+select throws_ok(
+  $$ update public.bill_fees set bill_id = 'e2000000-0000-0000-0000-000000000002'
+     where id = 'e4000000-0000-0000-0000-000000000001' $$,
+  'bill_fees.bill_id cannot be changed after creation',
+  'moving a fee to another bill is rejected'
 );
 
 select lives_ok(

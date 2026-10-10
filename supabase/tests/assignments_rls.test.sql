@@ -3,7 +3,7 @@
 -- read assignments, an outsider can't, and assignment changes are rejected when the bill is
 -- closed, the item has a payment, or `assigned_to` names someone off the bill.
 begin;
-select plan(10);
+select plan(12);
 
 insert into auth.users (id, email) values
   ('a5000000-0000-0000-0000-000000000001', 'payer@assign.example'),
@@ -92,7 +92,7 @@ set request.jwt.claim.sub = 'a5000000-0000-0000-0000-000000000001';
 select throws_ok(
   $$ update public.assignments set assigned_to = array[]::uuid[]
      where item_id = 'a8000000-0000-0000-0000-000000000002' $$,
-  'assignments locked: item a8000000-0000-0000-0000-000000000002 has a paid portion',
+  'assignments locked: bill a6000000-0000-0000-0000-000000000001 is closed or item a8000000-0000-0000-0000-000000000002 has a paid portion',
   'reassigning an item with a paid portion is rejected'
 );
 
@@ -102,7 +102,7 @@ select throws_ok(
        'a8000000-0000-0000-0000-000000000003', 'a6000000-0000-0000-0000-000000000002',
        array[]::uuid[]
      ) $$,
-  'assignments locked: bill a6000000-0000-0000-0000-000000000002 is closed',
+  'assignments locked: bill a6000000-0000-0000-0000-000000000002 is closed or item a8000000-0000-0000-0000-000000000003 has a paid portion',
   'assigning on a closed bill is rejected'
 );
 
@@ -126,6 +126,23 @@ select is_empty(
      where item_id = 'a8000000-0000-0000-0000-000000000001'
      returning 1 $$,
   'an outsider cannot edit an assignment'
+);
+
+-- assignments_delete_payer: only the payer can delete an assignment.
+set request.jwt.claim.sub = 'a5000000-0000-0000-0000-000000000002';
+
+select is_empty(
+  $$ delete from public.assignments
+     where item_id = 'a8000000-0000-0000-0000-000000000001'
+     returning 1 $$,
+  'a member cannot delete an assignment'
+);
+
+set request.jwt.claim.sub = 'a5000000-0000-0000-0000-000000000001';
+
+select lives_ok(
+  $$ delete from public.assignments where item_id = 'a8000000-0000-0000-0000-000000000001' $$,
+  'the payer can delete an assignment'
 );
 
 reset role;

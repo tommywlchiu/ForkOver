@@ -54,6 +54,21 @@ as $$
   );
 $$;
 
+-- Shared by the claim/assignment lock triggers (SPEC 8.2 "Triggers"): true once the bill is
+-- closed or the item has any paid portion. Factored out so a future change to the lock rule only
+-- has one place to change, instead of three copy-pasted checks.
+create function public.is_item_locked(p_item_id uuid, p_bill_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    exists (select 1 from public.bills b where b.id = p_bill_id and b.status = 'closed')
+    or exists (select 1 from public.payments p where p.item_id = p_item_id);
+$$;
+
 -- --- bills ------------------------------------------------------------------------------------
 
 create policy "bills_select_members" on public.bills
@@ -66,6 +81,35 @@ create policy "bills_update_payer" on public.bills
   for update
   using (public.is_bill_payer(id))
   with check (public.is_bill_payer(id));
+
+-- RLS can't restrict which columns an UPDATE touches, only which rows - so the policy above, on
+-- its own, would let the payer silently reassign `payer_user_id` (handing the whole bill to
+-- someone else and locking themselves out) or regenerate `share_token` (changing the public
+-- link). Both are identity/addressing fields, never part of the "bill status and receipt-level
+-- fields" the payer is meant to edit, so block changing them (or `id`) outright.
+create function public.guard_bills_immutable_fields()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.id is distinct from old.id then
+    raise exception 'bills.id cannot be changed';
+  end if;
+  if new.payer_user_id is distinct from old.payer_user_id then
+    raise exception 'bills.payer_user_id cannot be changed';
+  end if;
+  if new.share_token is distinct from old.share_token then
+    raise exception 'bills.share_token cannot be changed';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger bills_immutable_fields_guard
+  before update on public.bills
+  for each row execute function public.guard_bills_immutable_fields();
 
 -- --- bill_people --------------------------------------------------------------------------------
 
@@ -84,6 +128,10 @@ create policy "bill_people_update_named_by_payer" on public.bill_people
   for update
   using (kind = 'named' and public.is_bill_payer(bill_id))
   with check (kind = 'named' and public.is_bill_payer(bill_id));
+
+-- `guard_immutable_bill_id` (defined with `bill_items` below, since that's the risk it was added
+-- for) is applied to this table's trigger further down too: a named person's `bill_id` has the
+-- same "moved to a bill the payer also owns, orphaning their claims" risk.
 
 -- --- bill_items ----------------------------------------------------------------------------------
 
@@ -104,9 +152,11 @@ create policy "bill_items_delete_payer" on public.bill_items
   for delete
   using (public.is_bill_payer(bill_id));
 
--- FR-17: an item with any paid portion is locked, even for the payer. The policy above still
--- lets the payer's UPDATE/DELETE statement through; this trigger is what actually enforces the
--- lock at the database layer regardless of who's asking.
+-- FR-17 / SPEC 8.5: an item is locked - even for the payer - once the bill is closed or the item
+-- has any paid portion. The policy above still lets the payer's UPDATE/DELETE statement through;
+-- this trigger is what actually enforces the lock at the database layer regardless of who's
+-- asking. `bill_id` itself can't change (see the immutability guard below), so it's safe to read
+-- from either OLD or NEW here.
 create function public.guard_bill_item_lock()
 returns trigger
 language plpgsql
@@ -115,9 +165,10 @@ set search_path = public
 as $$
 declare
   v_item_id uuid := coalesce(new.id, old.id);
+  v_bill_id uuid := coalesce(new.bill_id, old.bill_id);
 begin
-  if exists (select 1 from public.payments p where p.item_id = v_item_id) then
-    raise exception 'bill_items locked: item % has a paid portion', v_item_id;
+  if public.is_item_locked(v_item_id, v_bill_id) then
+    raise exception 'bill_items locked: item % is closed or has a paid portion', v_item_id;
   end if;
 
   if tg_op = 'DELETE' then
@@ -130,6 +181,35 @@ $$;
 create trigger bill_items_lock_guard
   before update or delete on public.bill_items
   for each row execute function public.guard_bill_item_lock();
+
+-- An item's `bill_id` is immutable after creation: nothing in SPEC 8.1 asks for moving an item
+-- between bills, and allowing it would let the payer silently orphan dependent `claims`/
+-- `assignments`/`payments` rows (they'd keep the item's old `bill_id`, fail the consistency
+-- checks on their own next write, and drop out of the realtime subscription filtered by bill_id -
+-- SPEC 8.3). Reused for `bill_fees` and `bill_people` below, which have the same risk.
+create function public.guard_immutable_bill_id()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.bill_id is distinct from old.bill_id then
+    raise exception '%.bill_id cannot be changed after creation', tg_table_name;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger bill_items_immutable_bill_id
+  before update on public.bill_items
+  for each row execute function public.guard_immutable_bill_id();
+
+-- Applied to `bill_people` here (rather than up in that section) because `guard_immutable_bill_id`
+-- has to exist first; only the payer's named-person UPDATE policy can reach this trigger at all.
+create trigger bill_people_immutable_bill_id
+  before update on public.bill_people
+  for each row execute function public.guard_immutable_bill_id();
 
 -- --- bill_fees -----------------------------------------------------------------------------------
 
@@ -149,6 +229,10 @@ create policy "bill_fees_update_payer" on public.bill_fees
 create policy "bill_fees_delete_payer" on public.bill_fees
   for delete
   using (public.is_bill_payer(bill_id));
+
+create trigger bill_fees_immutable_bill_id
+  before update on public.bill_fees
+  for each row execute function public.guard_immutable_bill_id();
 
 -- --- claims ---------------------------------------------------------------------------------------
 
@@ -202,14 +286,23 @@ begin
     ) then
       raise exception 'claims.created_by does not belong to this bill';
     end if;
+    -- `created_by` records who actually made the claim; the RLS policy already restricts who can
+    -- write a *claim* (person_id) to the caller themselves or the payer, but without this check a
+    -- non-payer member could claim for themselves while setting created_by to any other
+    -- bill_people id on the bill, misattributing the claim.
+    if not (
+      exists (
+        select 1 from public.bill_people bp
+        where bp.id = new.created_by and bp.user_id = auth.uid()
+      )
+      or public.is_bill_payer(new.bill_id)
+    ) then
+      raise exception 'claims.created_by must be the caller''s own bill_people row, or the payer''s';
+    end if;
   end if;
 
-  if exists (select 1 from public.bills b where b.id = v_bill_id and b.status = 'closed') then
-    raise exception 'claims locked: bill % is closed', v_bill_id;
-  end if;
-
-  if exists (select 1 from public.payments p where p.item_id = v_item_id) then
-    raise exception 'claims locked: item % has a paid portion', v_item_id;
+  if public.is_item_locked(v_item_id, v_bill_id) then
+    raise exception 'claims locked: bill % is closed or item % has a paid portion', v_bill_id, v_item_id;
   end if;
 
   if tg_op = 'DELETE' then
@@ -272,12 +365,8 @@ begin
     end if;
   end if;
 
-  if exists (select 1 from public.bills b where b.id = v_bill_id and b.status = 'closed') then
-    raise exception 'assignments locked: bill % is closed', v_bill_id;
-  end if;
-
-  if exists (select 1 from public.payments p where p.item_id = v_item_id) then
-    raise exception 'assignments locked: item % has a paid portion', v_item_id;
+  if public.is_item_locked(v_item_id, v_bill_id) then
+    raise exception 'assignments locked: bill % is closed or item % has a paid portion', v_bill_id, v_item_id;
   end if;
 
   if tg_op = 'DELETE' then
@@ -396,19 +485,30 @@ $$;
 
 -- SPEC 8.2 "Username search": id/username/display_name only, >= 2 characters, at most 10 rows.
 -- Unrelated to bills - grouped here because the spec groups it in 8.2 - and unused until a later
--- task wires it into the payer's "add by username" UI.
+-- task wires it into the payer's "add by username" UI. Requires a session (signed in or
+-- anonymous), same guard as `join_bill`: without it, `security definer` means even the public
+-- `anon` key with no session at all could call this and scrape every username/display_name two
+-- characters at a time. The prefix's own `%`/`_` are escaped so caller input is matched
+-- literally instead of being interpreted as LIKE wildcards.
 create function public.search_usernames(p_prefix text)
 returns table (id uuid, username text, display_name text)
-language sql
+language plpgsql
 stable
 security definer
 set search_path = public
 as $$
-  select p.id, p.username, p.display_name
-  from public.profiles p
-  where length(trim(p_prefix)) >= 2
-    and p.username is not null
-    and p.username ilike trim(p_prefix) || '%'
-  order by p.username
-  limit 10;
+begin
+  if auth.uid() is null then
+    raise exception 'search_usernames requires a session (signed in or anonymous)';
+  end if;
+
+  return query
+    select p.id, p.username, p.display_name
+    from public.profiles p
+    where length(trim(p_prefix)) >= 2
+      and p.username is not null
+      and p.username ilike replace(replace(trim(p_prefix), '%', '\%'), '_', '\_') || '%' escape '\'
+    order by p.username
+    limit 10;
+end;
 $$;

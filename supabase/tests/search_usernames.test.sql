@@ -1,7 +1,9 @@
 -- pgTAP coverage for `search_usernames` (SPEC.md 8.2 "Username search"): matches by prefix,
--- requires at least 2 characters, and returns at most 10 rows.
+-- requires at least 2 characters, returns at most 10 rows, requires a session (it's `security
+-- definer`, so without this check the public anon key could scrape every username), and treats
+-- `%`/`_` in the caller's prefix as literal characters rather than LIKE wildcards.
 begin;
-select plan(4);
+select plan(6);
 
 insert into auth.users (id, email)
 select
@@ -49,6 +51,25 @@ select results_eq(
   $$ select count(*)::int from public.search_usernames('al') $$,
   $$ values (10) $$,
   'caps results at 10 rows'
+);
+
+-- `_` is a LIKE wildcard matching any single character; escaped, "b_b" must not match "bob01"
+-- even though an unescaped ilike('b_b%') would.
+select is_empty(
+  $$ select 1 from public.search_usernames('b_b') $$,
+  'treats an underscore in the prefix as a literal character, not a wildcard'
+);
+
+-- No session at all (the public anon key, unauthenticated): rejected outright, so it can't be
+-- used to scrape usernames two characters at a time.
+reset request.jwt.claim.sub;
+reset role;
+set role anon;
+
+select throws_ok(
+  $$ select public.search_usernames('al') $$,
+  'search_usernames requires a session (signed in or anonymous)',
+  'a caller with no session cannot search usernames'
 );
 
 reset role;

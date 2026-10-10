@@ -3,7 +3,7 @@
 -- claims for someone else, an outsider can't read claims, and claim changes are rejected once the
 -- bill is closed, the item has a payment, or `bill_id` doesn't match the item/person it names.
 begin;
-select plan(9);
+select plan(10);
 
 insert into auth.users (id, email) values
   ('f1000000-0000-0000-0000-000000000001', 'payer@claims.example'),
@@ -68,6 +68,18 @@ select lives_ok(
   'a member can update their own claim'
 );
 
+-- A non-payer member can claim for themselves (person_id passes the RLS policy), but can't
+-- misattribute it by setting created_by to someone else's bill_people row.
+select throws_ok(
+  $$ insert into public.claims (item_id, person_id, bill_id, mode, created_by)
+     values (
+       'f4000000-0000-0000-0000-000000000002', 'f3000000-0000-0000-0000-000000000002',
+       'f2000000-0000-0000-0000-000000000001', 'mine', 'f3000000-0000-0000-0000-000000000003'
+     ) $$,
+  'claims.created_by must be the caller''s own bill_people row, or the payer''s',
+  'a member cannot claim for themselves while misattributing created_by to someone else'
+);
+
 set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000001';
 
 select lives_ok(
@@ -112,7 +124,7 @@ select throws_ok(
        (select id from public.bill_people
         where bill_id = 'f2000000-0000-0000-0000-000000000001' and kind = 'payer')
      ) $$,
-  'claims locked: item f4000000-0000-0000-0000-000000000002 has a paid portion',
+  'claims locked: bill f2000000-0000-0000-0000-000000000001 is closed or item f4000000-0000-0000-0000-000000000002 has a paid portion',
   'claiming an item with a paid portion is rejected'
 );
 
@@ -123,7 +135,7 @@ select throws_ok(
        'f4000000-0000-0000-0000-000000000003', 'f3000000-0000-0000-0000-000000000009',
        'f2000000-0000-0000-0000-000000000002', 'mine', 'f3000000-0000-0000-0000-000000000009'
      ) $$,
-  'claims locked: bill f2000000-0000-0000-0000-000000000002 is closed',
+  'claims locked: bill f2000000-0000-0000-0000-000000000002 is closed or item f4000000-0000-0000-0000-000000000003 has a paid portion',
   'claiming on a closed bill is rejected'
 );
 

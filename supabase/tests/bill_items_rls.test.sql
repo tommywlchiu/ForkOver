@@ -3,7 +3,7 @@
 -- create/edit/delete them, an outsider can't, and an item with any paid portion is locked even
 -- for the payer.
 begin;
-select plan(9);
+select plan(11);
 
 insert into auth.users (id, email) values
   ('d1000000-0000-0000-0000-000000000001', 'payer@items.example'),
@@ -12,6 +12,17 @@ insert into auth.users (id, email) values
 
 insert into public.bills (id, payer_user_id, status)
 values ('d2000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-000000000001', 'open');
+
+-- A second bill the same payer owns, for the bill_id-immutability test, and a third, already
+-- closed, for the closed-bill lock.
+insert into public.bills (id, payer_user_id, status)
+values ('d2000000-0000-0000-0000-000000000002', 'd1000000-0000-0000-0000-000000000001', 'open');
+
+insert into public.bills (id, payer_user_id, status)
+values ('d2000000-0000-0000-0000-000000000003', 'd1000000-0000-0000-0000-000000000001', 'closed');
+
+insert into public.bill_items (id, bill_id, name, price_cents, position)
+values ('d4000000-0000-0000-0000-000000000003', 'd2000000-0000-0000-0000-000000000003', 'Soup', 500, 0);
 
 insert into public.bill_people (id, bill_id, user_id, display_name, kind)
 values (
@@ -63,6 +74,24 @@ select lives_ok(
   'the payer can delete an unpaid item'
 );
 
+-- bill_id is immutable after creation, even for the payer moving an item between two bills they
+-- own - nothing in SPEC 8.1 asks for this, and it would orphan dependent claims/assignments/
+-- payments rows.
+select throws_ok(
+  $$ update public.bill_items set bill_id = 'd2000000-0000-0000-0000-000000000002'
+     where id = 'd4000000-0000-0000-0000-000000000001' $$,
+  'bill_items.bill_id cannot be changed after creation',
+  'moving an item to another bill is rejected'
+);
+
+-- FR-17/SPEC 8.5: a closed bill locks its items too, even with no payment.
+select throws_ok(
+  $$ update public.bill_items set name = 'Renamed'
+     where id = 'd4000000-0000-0000-0000-000000000003' $$,
+  'bill_items locked: item d4000000-0000-0000-0000-000000000003 is closed or has a paid portion',
+  'editing an item on a closed bill is rejected'
+);
+
 set request.jwt.claim.sub = 'd1000000-0000-0000-0000-000000000002';
 
 select results_eq(
@@ -101,13 +130,13 @@ set request.jwt.claim.sub = 'd1000000-0000-0000-0000-000000000001';
 select throws_ok(
   $$ update public.bill_items set name = 'Renamed'
      where id = 'd4000000-0000-0000-0000-000000000001' $$,
-  'bill_items locked: item d4000000-0000-0000-0000-000000000001 has a paid portion',
+  'bill_items locked: item d4000000-0000-0000-0000-000000000001 is closed or has a paid portion',
   'the payer cannot edit an item with a paid portion'
 );
 
 select throws_ok(
   $$ delete from public.bill_items where id = 'd4000000-0000-0000-0000-000000000001' $$,
-  'bill_items locked: item d4000000-0000-0000-0000-000000000001 has a paid portion',
+  'bill_items locked: item d4000000-0000-0000-0000-000000000001 is closed or has a paid portion',
   'the payer cannot delete an item with a paid portion'
 );
 
