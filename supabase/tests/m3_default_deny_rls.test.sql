@@ -1,7 +1,9 @@
 -- pgTAP coverage for the M3 tables (SPEC.md 8.1/8.4, AGENTS.md "every table has RLS enabled, and
--- every policy has a pgTAP test"): `bills`, `scan_usage`, `scan_log`, and the `receipts` bucket
--- have no policies at all in M3, so a signed-in user must be denied every read and write on all
--- four. Only `parse-receipt`'s service-role client touches them.
+-- every policy has a pgTAP test"): `scan_usage`, `scan_log`, and the `receipts` bucket still have
+-- no policies at all, so a signed-in user is denied every read and write on them. Only
+-- `parse-receipt`'s service-role client touches them. `bills` gained real policies in M4 (SPEC
+-- 8.2), covered in bills_rls.test.sql; the one assertion about it below now checks that new,
+-- intended behavior instead of the old "no policies yet" default-deny baseline.
 begin;
 select plan(11);
 
@@ -22,13 +24,16 @@ values ('33333333-3333-3333-3333-333333333333');
 insert into storage.objects (bucket_id, name, owner)
 values ('receipts', '44444444-4444-4444-4444-444444444444/receipt.jpg', '33333333-3333-3333-3333-333333333333');
 
--- Acting as the bill's own payer: still denied, because there are no policies yet.
 set role authenticated;
 set request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
 
-select is_empty(
-  $$ select 1 from public.bills where id = '44444444-4444-4444-4444-444444444444' $$,
-  'signed-in user cannot read the bills row, even their own'
+-- M4 (SPEC 8.2 "Membership") gave bills a real select policy: the payer can now read their own
+-- bill. (Full payer/member/guest/outsider coverage of that policy lives in bills_rls.test.sql;
+-- this just confirms the M3-era "default deny" assumption above no longer holds for this table.)
+select results_eq(
+  $$ select id from public.bills where id = '44444444-4444-4444-4444-444444444444' $$,
+  $$ values ('44444444-4444-4444-4444-444444444444'::uuid) $$,
+  'signed-in payer can now read their own bills row (M4 added a select policy)'
 );
 
 select throws_ok(
@@ -83,7 +88,10 @@ select throws_ok(
   'signed-in user cannot upload into the receipts bucket'
 );
 
--- An anonymous (unauthenticated) caller fares no better.
+-- An anonymous (unauthenticated) caller fares no better. An anon caller has no JWT at all, so
+-- the leftover `request.jwt.claim.sub` from the payer above must be cleared too, or auth.uid()
+-- would still resolve to the payer and the bills check below would pass for the wrong reason.
+reset request.jwt.claim.sub;
 reset role;
 set role anon;
 
