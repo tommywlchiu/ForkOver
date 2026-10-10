@@ -54,9 +54,19 @@ as $$
   );
 $$;
 
--- Shared by the claim/assignment lock triggers (SPEC 8.2 "Triggers"): true once the bill is
+create function public.is_bill_closed(p_bill_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (select 1 from public.bills b where b.id = p_bill_id and b.status = 'closed');
+$$;
+
+-- Shared by the claim/assignment/item lock triggers (SPEC 8.2 "Triggers"): true once the bill is
 -- closed or the item has any paid portion. Factored out so a future change to the lock rule only
--- has one place to change, instead of three copy-pasted checks.
+-- has one place to change, instead of several copy-pasted checks.
 create function public.is_item_locked(p_item_id uuid, p_bill_id uuid)
 returns boolean
 language sql
@@ -65,7 +75,7 @@ security definer
 set search_path = public
 as $$
   select
-    exists (select 1 from public.bills b where b.id = p_bill_id and b.status = 'closed')
+    public.is_bill_closed(p_bill_id)
     or exists (select 1 from public.payments p where p.item_id = p_item_id);
 $$;
 
@@ -111,6 +121,33 @@ create trigger bills_immutable_fields_guard
   before update on public.bills
   for each row execute function public.guard_bills_immutable_fields();
 
+-- SPEC 8.5: "Closed bills are read-only except payment marks." Once a bill is closed, the payer
+-- can still close/re-save it (status, sent_at, closed_at) and cosmetic fields (title,
+-- merchant_name), but not the fields that feed the split math - changing any of these on a
+-- closed bill would silently alter everyone's already-settled share.
+create function public.guard_bills_closed_lock()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.status = 'closed' and (
+    new.discount_cents is distinct from old.discount_cents
+    or new.tax_cents is distinct from old.tax_cents
+    or new.tip is distinct from old.tip
+    or new.currency is distinct from old.currency
+  ) then
+    raise exception 'bills locked: bill % is closed', old.id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger bills_closed_lock_guard
+  before update on public.bills
+  for each row execute function public.guard_bills_closed_lock();
+
 -- --- bill_people --------------------------------------------------------------------------------
 
 create policy "bill_people_select_members" on public.bill_people
@@ -119,15 +156,20 @@ create policy "bill_people_select_members" on public.bill_people
 
 -- Members and guests join through `join_bill` (security definer, below), which bypasses this
 -- policy entirely. The only direct insert this table allows is the payer adding a named person
--- (SPEC 8.2 "Payer only").
+-- (SPEC 8.2 "Payer only"). Blocked once the bill is closed (SPEC 8.5): adding or renaming a
+-- named person after closing would change who the already-settled split names.
 create policy "bill_people_insert_named_by_payer" on public.bill_people
   for insert
-  with check (kind = 'named' and public.is_bill_payer(bill_id));
+  with check (
+    kind = 'named' and public.is_bill_payer(bill_id) and not public.is_bill_closed(bill_id)
+  );
 
 create policy "bill_people_update_named_by_payer" on public.bill_people
   for update
   using (kind = 'named' and public.is_bill_payer(bill_id))
-  with check (kind = 'named' and public.is_bill_payer(bill_id));
+  with check (
+    kind = 'named' and public.is_bill_payer(bill_id) and not public.is_bill_closed(bill_id)
+  );
 
 -- `guard_immutable_bill_id` (defined with `bill_items` below, since that's the risk it was added
 -- for) is applied to this table's trigger further down too: a named person's `bill_id` has the
@@ -153,10 +195,14 @@ create policy "bill_items_delete_payer" on public.bill_items
   using (public.is_bill_payer(bill_id));
 
 -- FR-17 / SPEC 8.5: an item is locked - even for the payer - once the bill is closed or the item
--- has any paid portion. The policy above still lets the payer's UPDATE/DELETE statement through;
--- this trigger is what actually enforces the lock at the database layer regardless of who's
--- asking. `bill_id` itself can't change (see the immutability guard below), so it's safe to read
--- from either OLD or NEW here.
+-- has any paid portion. The policy above still lets the payer's INSERT/UPDATE/DELETE statement
+-- through; this trigger is what actually enforces the lock at the database layer regardless of
+-- who's asking. INSERT is included too: without it, the payer could add brand-new items to a
+-- closed bill, which SPEC 8.5 ("closed bills are read-only") doesn't allow. A new item can't have
+-- a payment yet, so `is_item_locked` only effectively checks the bill's closed status for
+-- INSERT. `bill_id` itself can't change on UPDATE (see the immutability guard below), and the
+-- generated `id` default is already populated by the time a BEFORE INSERT trigger sees NEW, so
+-- it's safe to read both from either OLD or NEW here.
 create function public.guard_bill_item_lock()
 returns trigger
 language plpgsql
@@ -179,7 +225,7 @@ end;
 $$;
 
 create trigger bill_items_lock_guard
-  before update or delete on public.bill_items
+  before insert or update or delete on public.bill_items
   for each row execute function public.guard_bill_item_lock();
 
 -- An item's `bill_id` is immutable after creation: nothing in SPEC 8.1 asks for moving an item
@@ -233,6 +279,33 @@ create policy "bill_fees_delete_payer" on public.bill_fees
 create trigger bill_fees_immutable_bill_id
   before update on public.bill_fees
   for each row execute function public.guard_immutable_bill_id();
+
+-- SPEC 8.5: fees feed the split math directly, the same as items, so they're locked on a closed
+-- bill too. Unlike items, a fee has no payments of its own to key a paid-portion lock off of -
+-- only the bill's closed status matters here.
+create function public.guard_bill_fees_closed_lock()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_bill_id uuid := coalesce(new.bill_id, old.bill_id);
+begin
+  if public.is_bill_closed(v_bill_id) then
+    raise exception 'bill_fees locked: bill % is closed', v_bill_id;
+  end if;
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger bill_fees_closed_lock_guard
+  before insert or update or delete on public.bill_fees
+  for each row execute function public.guard_bill_fees_closed_lock();
 
 -- --- claims ---------------------------------------------------------------------------------------
 
@@ -502,12 +575,17 @@ begin
     raise exception 'search_usernames requires a session (signed in or anonymous)';
   end if;
 
+  -- Escape the caller's own backslashes first - otherwise a prefix containing one (e.g. `a\%`)
+  -- would have its backslash interact with the `%`/`_` escaping below instead of being matched
+  -- literally itself, leaving a wildcard unescaped.
   return query
     select p.id, p.username, p.display_name
     from public.profiles p
     where length(trim(p_prefix)) >= 2
       and p.username is not null
-      and p.username ilike replace(replace(trim(p_prefix), '%', '\%'), '_', '\_') || '%' escape '\'
+      and p.username ilike
+        replace(replace(replace(trim(p_prefix), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+        escape '\'
     order by p.username
     limit 10;
 end;

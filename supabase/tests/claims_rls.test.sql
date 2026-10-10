@@ -14,9 +14,11 @@ insert into auth.users (id, email) values
 insert into public.bills (id, payer_user_id, status)
 values ('f2000000-0000-0000-0000-000000000001', 'f1000000-0000-0000-0000-000000000001', 'open');
 
--- A second, already-closed bill, for the closed-bill trigger and the bill_id spoofing check.
+-- A second bill, created `open` and closed below after its item exists: the bill_items lock
+-- trigger now also fires on INSERT (SPEC 8.5) for every role including this fixture setup, so
+-- its item can't be inserted directly once the bill is already closed.
 insert into public.bills (id, payer_user_id, status)
-values ('f2000000-0000-0000-0000-000000000002', 'f1000000-0000-0000-0000-000000000001', 'closed');
+values ('f2000000-0000-0000-0000-000000000002', 'f1000000-0000-0000-0000-000000000001', 'open');
 
 -- `handle_new_bill` already gave the payer their own bill_people row when the bill was inserted
 -- above; only the two members need adding directly here.
@@ -38,6 +40,8 @@ values ('f4000000-0000-0000-0000-000000000003', 'f2000000-0000-0000-0000-0000000
 
 insert into public.bill_people (id, bill_id, user_id, display_name, kind)
 values ('f3000000-0000-0000-0000-000000000009', 'f2000000-0000-0000-0000-000000000002', 'f1000000-0000-0000-0000-000000000002', 'Member B', 'member');
+
+update public.bills set status = 'closed' where id = 'f2000000-0000-0000-0000-000000000002';
 
 set role authenticated;
 set request.jwt.claim.sub = 'f1000000-0000-0000-0000-000000000002';

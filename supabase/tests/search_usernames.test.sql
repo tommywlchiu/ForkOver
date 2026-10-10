@@ -3,7 +3,7 @@
 -- definer`, so without this check the public anon key could scrape every username), and treats
 -- `%`/`_` in the caller's prefix as literal characters rather than LIKE wildcards.
 begin;
-select plan(6);
+select plan(7);
 
 insert into auth.users (id, email)
 select
@@ -58,6 +58,15 @@ select results_eq(
 select is_empty(
   $$ select 1 from public.search_usernames('b_b') $$,
   'treats an underscore in the prefix as a literal character, not a wildcard'
+);
+
+-- Usernames can never contain a literal backslash (the format constraint on `profiles.username`
+-- is `[a-z0-9_]`), so this can't prove a match either way - it's a robustness check that a
+-- prefix containing one doesn't error out, which it would if the backslash weren't escaped
+-- before `%`/`_` are (a dangling, unpaired escape character makes the LIKE pattern invalid).
+select lives_ok(
+  $$ select 1 from public.search_usernames('bo\') $$,
+  'a prefix containing a backslash does not error'
 );
 
 -- No session at all (the public anon key, unauthenticated): rejected outright, so it can't be

@@ -3,7 +3,7 @@
 -- create/edit/delete them, an outsider can't, and an item with any paid portion is locked even
 -- for the payer.
 begin;
-select plan(11);
+select plan(12);
 
 insert into auth.users (id, email) values
   ('d1000000-0000-0000-0000-000000000001', 'payer@items.example'),
@@ -18,11 +18,16 @@ values ('d2000000-0000-0000-0000-000000000001', 'd1000000-0000-0000-0000-0000000
 insert into public.bills (id, payer_user_id, status)
 values ('d2000000-0000-0000-0000-000000000002', 'd1000000-0000-0000-0000-000000000001', 'open');
 
+-- Created `open` and closed below, after its item exists: the lock trigger now also fires on
+-- INSERT (SPEC 8.5) for every role including this fixture setup, so an item can't be inserted
+-- directly onto an already-closed bill even here.
 insert into public.bills (id, payer_user_id, status)
-values ('d2000000-0000-0000-0000-000000000003', 'd1000000-0000-0000-0000-000000000001', 'closed');
+values ('d2000000-0000-0000-0000-000000000003', 'd1000000-0000-0000-0000-000000000001', 'open');
 
 insert into public.bill_items (id, bill_id, name, price_cents, position)
 values ('d4000000-0000-0000-0000-000000000003', 'd2000000-0000-0000-0000-000000000003', 'Soup', 500, 0);
+
+update public.bills set status = 'closed' where id = 'd2000000-0000-0000-0000-000000000003';
 
 insert into public.bill_people (id, bill_id, user_id, display_name, kind)
 values (
@@ -90,6 +95,16 @@ select throws_ok(
      where id = 'd4000000-0000-0000-0000-000000000003' $$,
   'bill_items locked: item d4000000-0000-0000-0000-000000000003 is closed or has a paid portion',
   'editing an item on a closed bill is rejected'
+);
+
+-- The lock trigger covers INSERT too, so the payer can't add a brand-new item to a closed bill.
+select throws_ok(
+  $$ insert into public.bill_items (id, bill_id, name, price_cents, position)
+     values (
+       'd4000000-0000-0000-0000-000000000004', 'd2000000-0000-0000-0000-000000000003', 'Bread', 300, 1
+     ) $$,
+  'bill_items locked: item d4000000-0000-0000-0000-000000000004 is closed or has a paid portion',
+  'adding an item to a closed bill is rejected'
 );
 
 set request.jwt.claim.sub = 'd1000000-0000-0000-0000-000000000002';

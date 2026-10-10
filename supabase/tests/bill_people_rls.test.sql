@@ -3,7 +3,7 @@
 -- guest, joining again returns the same row, closed bills reject joining, and only the payer can
 -- add or edit a named person directly.
 begin;
-select plan(13);
+select plan(14);
 
 insert into auth.users (id, email) values
   ('c1000000-0000-0000-0000-000000000001', 'payer@people.example'),
@@ -116,6 +116,16 @@ select throws_ok(
      where id = 'c3000000-0000-0000-0000-000000000001' $$,
   'bill_people.bill_id cannot be changed after creation',
   'moving a named person to another bill is rejected'
+);
+
+-- SPEC 8.5: adding a named person to an already-closed bill would change who the settled split
+-- names, so it's blocked too (closed-bill check is in the policy's own with check, not a
+-- separate trigger, so this is a generic RLS violation, same as the non-payer case below).
+select throws_ok(
+  $$ insert into public.bill_people (bill_id, display_name, kind)
+     values ('c2000000-0000-0000-0000-000000000002', 'Too Late Pat', 'named') $$,
+  'new row violates row-level security policy for table "bill_people"',
+  'the payer cannot add a named person to a closed bill'
 );
 
 set request.jwt.claim.sub = 'c1000000-0000-0000-0000-000000000002';

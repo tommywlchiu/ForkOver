@@ -1,8 +1,9 @@
--- pgTAP coverage for `bill_fees`' M4 policies (SPEC.md 8.2 "Membership", "Payer only"): payer and
--- member can read fees, only the payer can create/edit/delete them, and an outsider can't read
--- them at all.
+-- pgTAP coverage for `bill_fees`' M4 policies and lock trigger (SPEC.md 8.2 "Membership", "Payer
+-- only", "Triggers"; SPEC 8.5): payer and member can read fees, only the payer can
+-- create/edit/delete them, an outsider can't read them at all, and fees are locked once the bill
+-- is closed since they feed the split math directly.
 begin;
-select plan(8);
+select plan(10);
 
 insert into auth.users (id, email) values
   ('e1000000-0000-0000-0000-000000000001', 'payer@fees.example'),
@@ -12,9 +13,27 @@ insert into auth.users (id, email) values
 insert into public.bills (id, payer_user_id, status)
 values ('e2000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'open');
 
--- A second bill the same payer owns, for the bill_id-immutability test.
+-- A second bill the same payer owns, for the bill_id-immutability test, and a third, already
+-- closed, for the closed-bill lock.
 insert into public.bills (id, payer_user_id, status)
 values ('e2000000-0000-0000-0000-000000000002', 'e1000000-0000-0000-0000-000000000001', 'open');
+
+-- Created `open` and closed below, after its fee exists: the new closed-bill lock trigger fires
+-- for every role including this fixture setup, so a fee can't be inserted directly onto an
+-- already-closed bill even here.
+insert into public.bills (id, payer_user_id, status)
+values ('e2000000-0000-0000-0000-000000000003', 'e1000000-0000-0000-0000-000000000001', 'open');
+
+insert into public.bill_fees (id, bill_id, label, cents, split)
+values (
+  'e4000000-0000-0000-0000-000000000003',
+  'e2000000-0000-0000-0000-000000000003',
+  'Service',
+  400,
+  'proportional'
+);
+
+update public.bills set status = 'closed' where id = 'e2000000-0000-0000-0000-000000000003';
 
 insert into public.bill_people (id, bill_id, user_id, display_name, kind)
 values (
@@ -65,6 +84,21 @@ select throws_ok(
 select lives_ok(
   $$ delete from public.bill_fees where id = 'e4000000-0000-0000-0000-000000000001' $$,
   'the payer can delete a fee'
+);
+
+-- SPEC 8.5: fees feed the split math directly, so a closed bill locks them too, same as items.
+select throws_ok(
+  $$ update public.bill_fees set cents = 450
+     where id = 'e4000000-0000-0000-0000-000000000003' $$,
+  'bill_fees locked: bill e2000000-0000-0000-0000-000000000003 is closed',
+  'editing a fee on a closed bill is rejected'
+);
+
+select throws_ok(
+  $$ insert into public.bill_fees (bill_id, label, cents, split)
+     values ('e2000000-0000-0000-0000-000000000003', 'Bag fee', 50, 'equal') $$,
+  'bill_fees locked: bill e2000000-0000-0000-0000-000000000003 is closed',
+  'adding a fee to a closed bill is rejected'
 );
 
 set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000002';

@@ -13,8 +13,12 @@ insert into auth.users (id, email) values
 insert into public.bills (id, payer_user_id, status)
 values ('b6000000-0000-0000-0000-000000000001', 'b5000000-0000-0000-0000-000000000001', 'open');
 
+-- Created `open` and closed below, after its item exists: the bill_items lock trigger now also
+-- fires on INSERT (SPEC 8.5) for every role including this fixture setup, so the item can't be
+-- inserted directly once the bill is already closed. Payments themselves are exempt (FR-25), so
+-- only the item insert needs this two-step dance.
 insert into public.bills (id, payer_user_id, status)
-values ('b6000000-0000-0000-0000-000000000002', 'b5000000-0000-0000-0000-000000000001', 'closed');
+values ('b6000000-0000-0000-0000-000000000002', 'b5000000-0000-0000-0000-000000000001', 'open');
 
 insert into public.bill_people (id, bill_id, user_id, display_name, kind)
 values (
@@ -39,6 +43,8 @@ values ('b8000000-0000-0000-0000-000000000001', 'b6000000-0000-0000-0000-0000000
 
 insert into public.bill_items (id, bill_id, name, price_cents, position)
 values ('b8000000-0000-0000-0000-000000000002', 'b6000000-0000-0000-0000-000000000002', 'Soup', 500, 0);
+
+update public.bills set status = 'closed' where id = 'b6000000-0000-0000-0000-000000000002';
 
 set role authenticated;
 set request.jwt.claim.sub = 'b5000000-0000-0000-0000-000000000002';
