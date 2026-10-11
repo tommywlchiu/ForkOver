@@ -15,6 +15,16 @@
  * reach their assertions without a live Supabase project. No realtime fan-out either: every
  * integration test acts through a single client, and optimistic local writes already cover that.
  */
+// Imported from `billTables.ts` (not `supabaseBillStore.ts` directly, and not redeclared here) so
+// the mock's table list and `subscribeToBillChanges`'s realtime table list can't drift apart the
+// way they already have once (code review on PR #31): `assignments`/`payments` aren't read or
+// written by `supabaseBillStore.ts` yet, but accepting them here is harmless and future-proof.
+// `billTables.ts` is a separate, dependency-free module specifically so this import doesn't go
+// through `supabaseBillStore.ts` -> `./supabaseClient`, which Jest resolves back to this very
+// mock file and silently left `ALL_BILL_TABLES` `undefined` here (a real circular-import bug this
+// review also caught).
+import { ALL_BILL_TABLES } from '../billTables';
+
 type AuthChangeEvent = 'SIGNED_IN' | 'SIGNED_OUT';
 
 type Profile = {
@@ -39,7 +49,7 @@ const listeners = new Set<(event: AuthChangeEvent, session: FakeSession | null) 
 // --- M4 bill tables: a tiny in-memory Postgres stand-in, see the module doc above -------------
 
 type Row = Record<string, unknown>;
-const BILL_TABLES = ['bills', 'bill_people', 'bill_items', 'bill_fees', 'claims'] as const;
+const BILL_TABLES = ALL_BILL_TABLES;
 type BillTable = (typeof BILL_TABLES)[number];
 const billTables: Record<BillTable, Map<string, Row>> = {
   bills: new Map(),
@@ -47,6 +57,8 @@ const billTables: Record<BillTable, Map<string, Row>> = {
   bill_items: new Map(),
   bill_fees: new Map(),
   claims: new Map(),
+  assignments: new Map(),
+  payments: new Map(),
 };
 
 /** `claims` has no single-column id (its primary key is (item_id, person_id)); everything else does. */
@@ -121,10 +133,14 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string
       return { data: found, error: null };
     }
     // upsert
-    const row: Row = { ...(this.payload as Row) };
-    const key = keyFor(this.table, row);
-    rows.set(key, { ...(rows.get(key) ?? {}), ...row });
-    return { data: [rows.get(key)], error: null };
+    const upserted = (Array.isArray(this.payload) ? this.payload : this.payload ? [this.payload] : []).map((item) => {
+      const row: Row = { ...item };
+      const key = keyFor(this.table, row);
+      const merged = { ...(rows.get(key) ?? {}), ...row };
+      rows.set(key, merged);
+      return merged;
+    });
+    return { data: upserted, error: null };
   }
 
   then<TResult1 = { data: unknown; error: { message: string } | null }, TResult2 = never>(
@@ -213,7 +229,7 @@ export const supabase = {
         insert: (payload: Row | Row[]) => new FakeQuery(table, 'insert', payload),
         update: (payload: Row) => new FakeQuery(table, 'update', payload),
         delete: () => new FakeQuery(table, 'delete'),
-        upsert: (payload: Row) => new FakeQuery(table, 'upsert', payload),
+        upsert: (payload: Row | Row[]) => new FakeQuery(table, 'upsert', payload),
       };
     }
     if (table !== 'profiles') throw new Error(`supabaseClient mock: unhandled table "${table}"`);

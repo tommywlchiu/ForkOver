@@ -9,12 +9,14 @@ import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Chip, PrimaryButton } from '../../../../components/Buttons';
+import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
 import { useThemeTokens } from '../../../../components/useThemeTokens';
 import { formatMoney } from '../../../../lib/money/format';
 import { parseMoneyInput } from '../../../../lib/money/parseMoneyInput';
 import { reconcile } from '../../../../lib/receipt/reconcile';
 import type { Fee, Tip } from '../../../../lib/split/split';
 import { useBillStore } from '../../../../state/bill';
+import { useResolvedBill } from '../../../../state/useResolvedBill';
 
 const TIP_CHIP_BPS: Record<'18' | '20' | '22', number> = { '18': 1800, '20': 2000, '22': 2200 };
 
@@ -22,10 +24,10 @@ export default function Review() {
   const theme = useThemeTokens();
   const { id: billId } = useLocalSearchParams<{ id: string }>();
 
-  // A scan's draft bill may still be under its pre-promotion local id while this screen is
-  // mounted (SPEC.md section 8, M4): `renamedBillIds` lets it keep resolving to the same bill
-  // once the scan's `done` event promotes it to a real server id (src/state/bill.ts `promote`).
-  const bill = useBillStore((s) => s.bills[billId] ?? s.bills[s.renamedBillIds[billId]]);
+  // `useResolvedBill` handles the local-id -> real-id rekey fallback (a scan's draft bill may
+  // still be under its pre-promotion local id while this screen is mounted, SPEC.md section 8,
+  // M4) and offline gating uniformly across every bill screen (code review on PR #31).
+  const { bill, controlsDisabled, syncError, dismissSyncError, notSynced, retrySync } = useResolvedBill(billId);
   const updateItem = useBillStore((s) => s.updateItem);
   const removeItem = useBillStore((s) => s.removeItem);
   const mergeItems = useBillStore((s) => s.mergeItems);
@@ -110,6 +112,23 @@ export default function Review() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
+      <NoConnectionBanner />
+      {notSynced && (
+        <View style={styles.row}>
+          <Text testID="bill-not-synced" style={{ color: theme.danger, flex: 1 }}>
+            This bill hasn&apos;t saved yet.
+          </Text>
+          <Text testID="retry-sync-button" accessibilityRole="button" accessibilityLabel="Retry saving this bill" onPress={retrySync} style={{ color: theme.primary }}>
+            Retry
+          </Text>
+        </View>
+      )}
+      {syncError && (
+        <Text testID="bill-sync-error" accessibilityLiveRegion="assertive" onPress={dismissSyncError} style={{ color: theme.danger, paddingVertical: 6 }}>
+          {syncError}
+        </Text>
+      )}
+
       <Text style={[styles.title, { color: theme.text }]}>{bill.merchantName ?? 'Review the bill'}</Text>
 
       {bill.scanState === 'streaming' && (
@@ -131,6 +150,7 @@ export default function Review() {
               testID={`item-name-${item.id}`}
               value={item.name}
               onChangeText={(text) => updateItem(bill.id, item.id, { name: text })}
+              editable={!controlsDisabled}
               accessibilityLabel={`Item name: ${item.name}`}
               style={[styles.itemNameInput, { color: theme.text }]}
             />
@@ -142,6 +162,7 @@ export default function Review() {
                 const cents = parseMoneyInput(e.nativeEvent.text, currency);
                 if (cents !== null) updateItem(bill.id, item.id, { priceCents: cents });
               }}
+              editable={!controlsDisabled}
               keyboardType="decimal-pad"
               accessibilityLabel={`Item price: ${formatMoney(item.priceCents, currency, 'en-US')}`}
               style={[styles.itemPriceInput, { color: theme.text }]}
@@ -150,8 +171,9 @@ export default function Review() {
               testID={`delete-item-${item.id}`}
               accessibilityRole="button"
               accessibilityLabel={`Remove ${item.name}`}
-              onPress={() => removeItem(bill.id, item.id)}
-              style={{ color: theme.danger, paddingHorizontal: 8 }}
+              accessibilityState={{ disabled: controlsDisabled }}
+              onPress={controlsDisabled ? undefined : () => removeItem(bill.id, item.id)}
+              style={{ color: controlsDisabled ? theme.textMuted : theme.danger, paddingHorizontal: 8 }}
             >
               ✕
             </Text>
@@ -166,8 +188,9 @@ export default function Review() {
             testID={`merge-items-${name}`}
             accessibilityRole="button"
             accessibilityLabel={`Merge ${name} back into one line`}
-            onPress={() => mergeItems(bill.id, ids)}
-            style={{ color: theme.primary, marginBottom: 8 }}
+            accessibilityState={{ disabled: controlsDisabled }}
+            onPress={controlsDisabled ? undefined : () => mergeItems(bill.id, ids)}
+            style={{ color: controlsDisabled ? theme.textMuted : theme.primary, marginBottom: 8 }}
           >
             Merge {name} ({ids.length})
           </Text>
@@ -180,6 +203,7 @@ export default function Review() {
           onChangeText={setNewItemName}
           placeholder="Item name"
           placeholderTextColor={theme.textMuted}
+          editable={!controlsDisabled}
           style={[styles.itemNameInput, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}
         />
         <TextInput
@@ -189,21 +213,27 @@ export default function Review() {
           placeholder="0.00"
           placeholderTextColor={theme.textMuted}
           keyboardType="decimal-pad"
+          editable={!controlsDisabled}
           style={[styles.itemPriceInput, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}
         />
         <Text
           testID="add-item-button"
           accessibilityRole="button"
           accessibilityLabel="Add item"
-          onPress={() => {
-            const cents = parseMoneyInput(newItemPrice, currency);
-            if (newItemName.trim() && cents !== null) {
-              addItem(bill.id, { name: newItemName.trim(), priceCents: cents });
-              setNewItemName('');
-              setNewItemPrice('');
-            }
-          }}
-          style={{ color: theme.primary, paddingHorizontal: 8 }}
+          accessibilityState={{ disabled: controlsDisabled }}
+          onPress={
+            controlsDisabled
+              ? undefined
+              : () => {
+                  const cents = parseMoneyInput(newItemPrice, currency);
+                  if (newItemName.trim() && cents !== null) {
+                    addItem(bill.id, { name: newItemName.trim(), priceCents: cents });
+                    setNewItemName('');
+                    setNewItemPrice('');
+                  }
+                }
+          }
+          style={{ color: controlsDisabled ? theme.textMuted : theme.primary, paddingHorizontal: 8 }}
         >
           Add
         </Text>
@@ -252,6 +282,7 @@ export default function Review() {
             if (cents !== null) setDiscount(bill.id, cents);
           }}
           keyboardType="decimal-pad"
+          editable={!controlsDisabled}
           accessibilityLabel="Discount amount"
           style={[styles.itemPriceInput, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}
         />
@@ -267,6 +298,7 @@ export default function Review() {
             if (cents !== null) setTax(bill.id, cents);
           }}
           keyboardType="decimal-pad"
+          editable={!controlsDisabled}
           accessibilityLabel="Tax amount"
           style={[styles.itemPriceInput, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}
         />
@@ -279,6 +311,7 @@ export default function Review() {
             testID={`fee-label-${fee.id}`}
             value={fee.label}
             onChangeText={(text) => updateFee(bill.id, fee.id, { label: text })}
+            editable={!controlsDisabled}
             accessibilityLabel={`Fee label: ${fee.label}`}
             style={[styles.itemNameInput, { color: theme.text }]}
           />
@@ -291,6 +324,7 @@ export default function Review() {
               if (cents !== null) updateFee(bill.id, fee.id, { cents });
             }}
             keyboardType="decimal-pad"
+            editable={!controlsDisabled}
             accessibilityLabel={`Fee amount: ${formatMoney(fee.cents, currency, 'en-US')}`}
             style={[styles.itemPriceInput, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}
           />
@@ -298,14 +332,16 @@ export default function Review() {
             testID={`fee-split-toggle-${fee.id}`}
             label={fee.split === 'proportional' ? 'Proportional' : 'Even'}
             selected={fee.split === 'equal'}
+            disabled={controlsDisabled}
             onPress={() => updateFee(bill.id, fee.id, { split: fee.split === 'proportional' ? 'equal' : 'proportional' })}
           />
           <Text
             testID={`remove-fee-${fee.id}`}
             accessibilityRole="button"
             accessibilityLabel={`Remove ${fee.label}`}
-            onPress={() => removeFee(bill.id, fee.id)}
-            style={{ color: theme.danger, paddingHorizontal: 8 }}
+            accessibilityState={{ disabled: controlsDisabled }}
+            onPress={controlsDisabled ? undefined : () => removeFee(bill.id, fee.id)}
+            style={{ color: controlsDisabled ? theme.textMuted : theme.danger, paddingHorizontal: 8 }}
           >
             ✕
           </Text>
@@ -315,8 +351,9 @@ export default function Review() {
         testID="add-fee-button"
         accessibilityRole="button"
         accessibilityLabel="Add a fee"
-        onPress={() => addFee(bill.id, { label: 'Fee', cents: 0, split: 'proportional' })}
-        style={{ color: theme.primary }}
+        accessibilityState={{ disabled: controlsDisabled }}
+        onPress={controlsDisabled ? undefined : () => addFee(bill.id, { label: 'Fee', cents: 0, split: 'proportional' })}
+        style={{ color: controlsDisabled ? theme.textMuted : theme.primary }}
       >
         + Add fee
       </Text>
@@ -338,24 +375,20 @@ export default function Review() {
                 testID={`tip-chip-${key}`}
                 label={`${key}%`}
                 selected={selectedTipChip === key}
+                disabled={controlsDisabled}
                 onPress={() => onSelectPercentChip(key)}
               />
             ))}
-            <Chip
-              testID="tip-chip-custom"
-              label="Custom"
-              selected={showCustomTip}
-              onPress={() => setShowCustomTip((v) => !v)}
-            />
+            <Chip testID="tip-chip-custom" label="Custom" selected={showCustomTip} disabled={controlsDisabled} onPress={() => setShowCustomTip((v) => !v)} />
           </View>
           <View style={styles.row}>
-            <Chip testID="tip-base-pretax" label="Pre-tax" selected={tipBase === 'preTax'} onPress={() => onToggleBase('preTax')} />
-            <Chip testID="tip-base-posttax" label="Post-tax" selected={tipBase === 'postTax'} onPress={() => onToggleBase('postTax')} />
+            <Chip testID="tip-base-pretax" label="Pre-tax" selected={tipBase === 'preTax'} disabled={controlsDisabled} onPress={() => onToggleBase('preTax')} />
+            <Chip testID="tip-base-posttax" label="Post-tax" selected={tipBase === 'postTax'} disabled={controlsDisabled} onPress={() => onToggleBase('postTax')} />
           </View>
           {showCustomTip && (
             <View style={styles.row}>
-              <Chip testID="tip-custom-mode-percent" label="%" selected={customTipMode === 'percent'} onPress={() => setCustomTipMode('percent')} />
-              <Chip testID="tip-custom-mode-amount" label="$" selected={customTipMode === 'amount'} onPress={() => setCustomTipMode('amount')} />
+              <Chip testID="tip-custom-mode-percent" label="%" selected={customTipMode === 'percent'} disabled={controlsDisabled} onPress={() => setCustomTipMode('percent')} />
+              <Chip testID="tip-custom-mode-amount" label="$" selected={customTipMode === 'amount'} disabled={controlsDisabled} onPress={() => setCustomTipMode('amount')} />
               <TextInput
                 testID="tip-custom-input"
                 value={customTipText}
@@ -363,14 +396,16 @@ export default function Review() {
                 keyboardType="decimal-pad"
                 placeholder={customTipMode === 'percent' ? '15' : '0.00'}
                 placeholderTextColor={theme.textMuted}
+                editable={!controlsDisabled}
                 style={[styles.itemPriceInput, { color: theme.text, borderColor: theme.border, borderWidth: 1 }]}
               />
               <Text
                 testID="tip-custom-apply-button"
                 accessibilityRole="button"
                 accessibilityLabel="Apply custom tip"
-                onPress={applyCustomTip}
-                style={{ color: theme.primary, paddingHorizontal: 8 }}
+                accessibilityState={{ disabled: controlsDisabled }}
+                onPress={controlsDisabled ? undefined : applyCustomTip}
+                style={{ color: controlsDisabled ? theme.textMuted : theme.primary, paddingHorizontal: 8 }}
               >
                 Apply
               </Text>
@@ -382,6 +417,7 @@ export default function Review() {
       <PrimaryButton
         testID="looks-right-button"
         label="Looks right"
+        disabled={controlsDisabled}
         onPress={() => {
           confirmReview(bill.id);
           router.replace({ pathname: '/bill/[id]/share', params: { id: bill.id } });

@@ -24,6 +24,14 @@ export type BillState = {
   /** Last sync-failure message per bill, for a screen to show and dismiss (SPEC 8.3). */
   syncErrors: Record<string, string>;
   dismissSyncError: (billId: string) => void;
+  /**
+   * Bill ids whose promotion (local id -> real server id) was attempted and failed - a persistent
+   * state, not a one-off toast like `syncErrors`, since every future edit on an unpromoted bill
+   * stays local-only and never reaches the server until promotion succeeds (code review on #31).
+   */
+  unsyncedBillIds: Record<string, true>;
+  /** Retries promotion for a bill still stuck local-only (SPEC 8.3; `unsyncedBillIds`). */
+  retrySync: (billId: string) => Promise<void>;
 
   createDraftBill: (payer: { id: string; name: string }) => string;
   startScan: (billId: string, image: ImageCapture) => Promise<void>;
@@ -72,17 +80,36 @@ export const useBillStore = create<BillState>((set, get) => {
    * adopting the scan's own id otherwise - see `supabaseBillStore.ts`'s module doc) and rekeys
    * `bills`/`renamedBillIds` so a screen still mounted on the old (local) id keeps resolving to
    * the same bill, just under its real id from here on.
+   *
+   * `promoteBill` never partially succeeds: on any failure it returns the same draft, unchanged,
+   * still under `localId` (see its own doc). That's the signal used below to tell success from
+   * failure, rather than trusting a boolean the lower layer would have to remember to report
+   * correctly too - `promoted.id === localId` is only ever true when nothing actually promoted.
    */
   async function promote(localId: string, serverId?: string): Promise<string> {
     const draft = get().bills[localId];
     if (!draft) return localId;
     const payerPerson = draft.people.find((p) => p.kind === 'payer') ?? draft.people[0];
+    // Every bill always has a payer at index 0 with kind 'payer' (createDraftBill's own
+    // invariant); the `?? draft.people[0]` fallback only exists in case a future change breaks
+    // that, so this never has to throw on a `payerPerson` that's somehow undefined.
     const promoted = await dataStore.promoteBill(localId, { id: draft.payerId, name: payerPerson?.name ?? '' }, serverId);
+
+    if (promoted.id === localId) {
+      // Promotion failed; the draft is untouched and still local-only. Flag it so a screen can
+      // show a persistent "not synced" state instead of just the one-off `syncErrors` toast
+      // `onSyncError` already set.
+      set((state) => ({ bills: { ...state.bills, [localId]: promoted }, unsyncedBillIds: { ...state.unsyncedBillIds, [localId]: true } }));
+      return localId;
+    }
+
     set((state) => {
-      const { [localId]: _removed, ...rest } = state.bills;
+      const { [localId]: _removedBill, ...restBills } = state.bills;
+      const { [localId]: _removedFlag, ...restUnsynced } = state.unsyncedBillIds;
       return {
-        bills: { ...rest, [promoted.id]: promoted },
-        renamedBillIds: promoted.id === localId ? state.renamedBillIds : { ...state.renamedBillIds, [localId]: promoted.id },
+        bills: { ...restBills, [promoted.id]: promoted },
+        renamedBillIds: { ...state.renamedBillIds, [localId]: promoted.id },
+        unsyncedBillIds: restUnsynced,
       };
     });
     return promoted.id;
@@ -97,6 +124,10 @@ export const useBillStore = create<BillState>((set, get) => {
         const { [billId]: _removed, ...rest } = state.syncErrors;
         return { syncErrors: rest };
       });
+    },
+    unsyncedBillIds: {},
+    retrySync: async (billId) => {
+      await promote(billId);
     },
 
     createDraftBill: (payer) => {
@@ -175,10 +206,18 @@ export const useBillStore = create<BillState>((set, get) => {
     },
 
     subscribeToBill: (billId) => {
-      return subscribeToBillChanges(billId, (snapshot) => {
-        if (!snapshot) return;
-        set((state) => ({ bills: { ...state.bills, [billId]: snapshot } }));
-      }, get().bills[billId]);
+      return subscribeToBillChanges(
+        billId,
+        (snapshot) => {
+          if (!snapshot) return;
+          set((state) => ({ bills: { ...state.bills, [billId]: snapshot } }));
+        },
+        // Read fresh on every refetch, not once when the subscription starts: `assemble()` falls
+        // back to this for fields with no DB column (tipSource, warnings, scanState, ...), so a
+        // stale closed-over snapshot would silently revert them to their mount-time values on
+        // every later refetch (code review on #31).
+        () => get().bills[billId],
+      );
     },
 
     refetchBill: async (billId) => {

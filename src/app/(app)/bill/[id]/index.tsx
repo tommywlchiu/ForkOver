@@ -14,13 +14,15 @@ import { useThemeTokens } from '../../../../components/useThemeTokens';
 import { formatMoney } from '../../../../lib/money/format';
 import { claimStateMeta } from '../../../../lib/theme/tokens';
 import { useBillStore } from '../../../../state/bill';
-import { useConnectivityStore } from '../../../../state/connectivity';
+import { useResolvedBill } from '../../../../state/useResolvedBill';
 
 export default function BillScreen() {
   const theme = useThemeTokens();
   const { id: billId } = useLocalSearchParams<{ id: string }>();
 
-  const bill = useBillStore((s) => s.bills[billId]);
+  // `useResolvedBill` handles the local-id -> real-id rekey fallback and offline gating
+  // uniformly across every bill screen (code review on PR #31).
+  const { bill, controlsDisabled, isConnected, syncError, dismissSyncError, notSynced, retrySync } = useResolvedBill(billId);
   const addPerson = useBillStore((s) => s.addPerson);
   const toggleMine = useBillStore((s) => s.toggleMine);
   const toggleShared = useBillStore((s) => s.toggleShared);
@@ -29,37 +31,38 @@ export default function BillScreen() {
   const claimFor = useBillStore((s) => s.claimFor);
   const subscribeToBill = useBillStore((s) => s.subscribeToBill);
   const refetchBill = useBillStore((s) => s.refetchBill);
-  const syncError = useBillStore((s) => s.syncErrors[billId]);
-  const dismissSyncError = useBillStore((s) => s.dismissSyncError);
-  const isConnected = useConnectivityStore((s) => s.isConnected);
 
   const [activePersonId, setActivePersonId] = useState<string | null>(null);
   const [addingPerson, setAddingPerson] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
 
+  // The resolved real bill id (not the raw route param - a scan's draft bill may still be mounted
+  // under its local id, which realtime has nothing to subscribe to), captured once so both
+  // effects below can depend on a plain string instead of the whole `bill` object re-running them
+  // on every field change.
+  const resolvedBillId = bill?.id;
+
   // SPEC 8.3: subscribe to realtime changes for this bill once it's mounted; resubscribing (a
-  // fresh effect run) whenever the bill id itself changes.
+  // fresh effect run) whenever the resolved bill id itself changes.
   useEffect(() => {
-    if (!billId) return undefined;
-    const unsubscribe = subscribeToBill(billId);
+    if (!resolvedBillId) return undefined;
+    const unsubscribe = subscribeToBill(resolvedBillId);
     return unsubscribe;
-  }, [billId, subscribeToBill]);
+  }, [resolvedBillId, subscribeToBill]);
 
   // SPEC 8.3: "on reconnect, refetch the bill snapshot and resubscribe." The effect above already
   // resubscribes on remount; reconnecting doesn't remount this screen, so refetch explicitly here.
   const wasConnected = useRef(isConnected);
   useEffect(() => {
-    if (isConnected && !wasConnected.current && billId) void refetchBill(billId);
+    if (isConnected && !wasConnected.current && resolvedBillId) void refetchBill(resolvedBillId);
     wasConnected.current = isConnected;
-  }, [isConnected, billId, refetchBill]);
+  }, [isConnected, resolvedBillId, refetchBill]);
 
   const split = bill ? getSplit(bill.id) : null;
   const resolvedItems = bill ? getResolvedItems(bill.id) : [];
   const resolvedById = new Map(resolvedItems.map((r) => [r.itemId, r]));
 
   if (!bill) return <Redirect href="/" />;
-
-  const controlsDisabled = !isConnected;
 
   const selectedPersonId = activePersonId ?? bill.payerId;
   const peopleById = new Map(bill.people.map((p) => [p.id, p.name]));
@@ -69,13 +72,18 @@ export default function BillScreen() {
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
       <NoConnectionBanner />
+      {notSynced && (
+        <View style={styles.row}>
+          <Text testID="bill-not-synced" style={{ color: theme.danger, flex: 1 }}>
+            This bill hasn&apos;t saved yet.
+          </Text>
+          <Text testID="retry-sync-button" accessibilityRole="button" accessibilityLabel="Retry saving this bill" onPress={retrySync} style={{ color: theme.primary }}>
+            Retry
+          </Text>
+        </View>
+      )}
       {syncError && (
-        <Text
-          testID="bill-sync-error"
-          accessibilityLiveRegion="assertive"
-          onPress={() => dismissSyncError(bill.id)}
-          style={{ color: theme.danger, paddingVertical: 6 }}
-        >
+        <Text testID="bill-sync-error" accessibilityLiveRegion="assertive" onPress={dismissSyncError} style={{ color: theme.danger, paddingVertical: 6 }}>
           {syncError}
         </Text>
       )}

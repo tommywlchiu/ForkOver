@@ -67,6 +67,13 @@ describe('createSupabaseBillStore', () => {
     const bill = store.createDraftBill({ id: userId, name: 'Alex' });
     const rpcSpy = jest.spyOn(supabase, 'rpc');
 
+    // parse-receipt (service role) already created this row server-side before the scan's `done`
+    // event ever names it (SPEC 7.1) - seed it the same way, including the payer `bill_people`
+    // row `handle_new_bill`'s trigger would give it, so the real `fetchSnapshot` read-back
+    // `promoteBill` does at the end can actually find it.
+    await supabase.from('bills').insert({ id: 'server-bill-1', payer_user_id: userId, status: 'draft' });
+    await supabase.from('bill_people').insert({ bill_id: 'server-bill-1', user_id: userId, display_name: 'Alex', kind: 'payer' });
+
     const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' }, 'server-bill-1');
 
     expect(promoted.id).toBe('server-bill-1');
@@ -107,5 +114,97 @@ describe('createSupabaseBillStore', () => {
     expect(storeWithErrors.getBill(otherPromoted.id)!.items).toEqual([]);
     expect(onSyncError).toHaveBeenCalledWith(otherPromoted.id, expect.stringContaining('add'));
     fromSpy.mockRestore();
+  });
+
+  // Code review on PR #31: promoteBill used to never flush claims at all, and silently marked a
+  // bill "promoted" even when one of its writes failed - losing whatever didn't save on the very
+  // next refetch, with nothing ever telling the payer.
+  it('flushes claims made before promotion, not just items and fees', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const item = store.addItem(bill.id, { name: 'Ramen', priceCents: 1200 });
+    store.setClaim(bill.id, item.id, userId, 'mine', userId);
+
+    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+
+    expect(promoted.claims).toEqual([{ itemId: item.id, personId: promoted.payerId, mode: 'mine', createdBy: promoted.payerId }]);
+    const { data: claimRows } = await supabase.from('claims').select('item_id,mode').eq('bill_id', promoted.id);
+    expect(claimRows).toEqual([expect.objectContaining({ item_id: item.id, mode: 'mine' })]);
+  });
+
+  it('leaves a bill local-only (not promoted) when the flush fails, and lets a retry succeed', async () => {
+    const userId = await signIn();
+    const onSyncError = jest.fn();
+    const store = createSupabaseBillStore(onSyncError);
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    store.addItem(bill.id, { name: 'Ramen', priceCents: 1200 });
+
+    // The items upsert (one of the parallel writes) fails this one time; everything else on
+    // `bill_items` (including `fetchSnapshot`'s own `select`, right after) still delegates to the
+    // real fake table, as does every other table.
+    const realFrom = supabase.from.bind(supabase);
+    const fromSpy = jest.spyOn(supabase, 'from').mockImplementation((table: string) => {
+      const real = realFrom(table);
+      if (table !== 'bill_items') return real;
+      return {
+        ...real,
+        upsert: () => ({ then: (cb: (r: { error: { message: string } }) => void) => Promise.resolve(cb({ error: { message: 'conflict' } })) }),
+      } as unknown as ReturnType<typeof supabase.from>;
+    });
+
+    const failed = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+
+    expect(failed.id).toBe(bill.id); // unchanged: still the local draft, not rekeyed
+    expect(store.getBill(bill.id)).toBe(failed);
+    expect(onSyncError).toHaveBeenCalledWith(bill.id, expect.stringContaining('Try again'));
+    fromSpy.mockRestore();
+
+    // A retry (no spy interference this time) succeeds, reusing the id the first attempt already
+    // minted - `create_manual_bill` is never called again for the same local draft, so a flaky
+    // retry can't mint a second, orphaned bill.
+    const rpcSpy = jest.spyOn(supabase, 'rpc');
+    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    expect(promoted.id).not.toBe(bill.id);
+    expect(promoted.items).toHaveLength(1);
+    expect(rpcSpy).not.toHaveBeenCalled();
+    rpcSpy.mockRestore();
+  });
+
+  it('mergeItems forces a reconciling refetch if the delete of the original items fails', async () => {
+    const userId = await signIn();
+    const onSyncError = jest.fn();
+    const store = createSupabaseBillStore(onSyncError);
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const a = store.addItem(promoted.id, { name: 'Beer', priceCents: 500 });
+    const b = store.addItem(promoted.id, { name: 'Beer', priceCents: 500 });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Everything but the delete behaves normally (delegated to the real fake table); only the
+    // `bill_items` delete this merge issues fails, simulating the insert succeeding but the
+    // cleanup delete not (code review on #31: the local cache must not just show the merge while
+    // the server keeps the stale originals around too).
+    const realFrom = supabase.from.bind(supabase);
+    const fromSpy = jest.spyOn(supabase, 'from').mockImplementation((table: string) => {
+      const real = realFrom(table);
+      if (table !== 'bill_items') return real;
+      return {
+        ...real,
+        delete: () => ({ in: () => Promise.resolve({ error: { message: 'conflict' } }) }),
+      } as unknown as ReturnType<typeof supabase.from>;
+    });
+
+    store.mergeItems(promoted.id, [a.id, b.id]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onSyncError).toHaveBeenCalledWith(promoted.id, expect.stringContaining('merging'));
+    fromSpy.mockRestore();
+
+    // The reconciling refetch picked up the server's actual (duplicated) state: the merged item
+    // plus both stale originals the failed delete left behind.
+    expect(store.getBill(promoted.id)!.items.map((i) => i.name).sort()).toEqual(['Beer', 'Beer', 'Beer']);
   });
 });
