@@ -40,10 +40,10 @@ export default function Home() {
   );
   const scansLeft = Math.max(0, FREE_SCANS_PER_MONTH - scansUsedThisMonth);
 
-  const goManual = () => {
+  const goManual = async () => {
     const billId = createDraftBill(payer);
-    startManualEntry(billId);
-    router.push({ pathname: '/bill/[id]/review', params: { id: billId } });
+    const realId = await startManualEntry(billId);
+    router.push({ pathname: '/bill/[id]/review', params: { id: realId } });
   };
 
   const startScanFlow = () => {

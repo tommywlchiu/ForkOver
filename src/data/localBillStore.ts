@@ -10,7 +10,12 @@ import type { Claim, ClaimMode } from '../lib/claims/resolve';
 import type { ParsedLineItem, ParsedReceipt, TipSource } from '../lib/receipt/schema';
 
 export type BillStatus = 'draft' | 'open' | 'closed';
-export type PersonKind = 'payer' | 'named';
+// 'member' and 'guest' only ever appear once something writes a bill_people row of that kind -
+// the join-bill flow (SPEC 8.2), out of scope for this task - but a promoted bill's realtime
+// refetch (supabaseBillStore.ts `assemble`) already reads them back so the payer's bill screen
+// shows a member/guest's claims live the moment that flow exists, rather than needing another
+// change here later.
+export type PersonKind = 'payer' | 'named' | 'member' | 'guest';
 export type ScanState = 'idle' | 'streaming' | 'done' | 'error';
 
 export type StoredPerson = { id: string; name: string; kind: PersonKind };
@@ -75,6 +80,16 @@ export interface BillStore {
 
   openBill(billId: string): void;
   markSent(billId: string): void;
+
+  /**
+   * Promotes a draft minted by `createDraftBill` (a purely local id, M3) to the real id a
+   * server-backed implementation issued (M4): either the id `parse-receipt` already created for
+   * a scan (passed as `serverId`, learned from the stream's `done` event), or, when `serverId` is
+   * omitted, a brand new one this call creates itself (manual entry, which has no Edge Function in
+   * its path - SPEC.md section 8, M4 realtime-store task). Rekeys the stored bill from `localId` to
+   * the result's `id` and returns it; this in-memory implementation treats that as a pure rename.
+   */
+  promoteBill(localId: string, payer: { id: string; name: string }, serverId?: string): Promise<StoredBill>;
 }
 
 type StoredFeeResult = Fee;
@@ -259,6 +274,14 @@ export function createLocalBillStore(): BillStore {
 
     markSent(billId) {
       require(billId).sentAt = Date.now();
+    },
+
+    async promoteBill(localId, _payer, serverId) {
+      const bill = require(localId);
+      const promoted: StoredBill = { ...bill, id: serverId ?? makeLocalId('bill') };
+      bills.delete(localId);
+      bills.set(promoted.id, promoted);
+      return promoted;
     },
   };
 }

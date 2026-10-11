@@ -108,6 +108,26 @@ describe('createLocalBillStore', () => {
     expect(store.getBill(bill.id)!.sentAt).not.toBeNull();
   });
 
+  it('promotes a draft to a given server id, rekeying it in place', async () => {
+    const store = createLocalBillStore();
+    const bill = store.createDraftBill({ id: 'p1', name: 'Alex' });
+    store.addItem(bill.id, { name: 'Nachos', priceCents: 900 });
+
+    const promoted = await store.promoteBill(bill.id, { id: 'p1', name: 'Alex' }, 'server-bill-1');
+    expect(promoted.id).toBe('server-bill-1');
+    expect(promoted.items).toHaveLength(1);
+    expect(store.getBill(bill.id)).toBeUndefined();
+    expect(store.getBill('server-bill-1')).toBe(promoted);
+  });
+
+  it('promotes a draft to a fresh local id when none is given', async () => {
+    const store = createLocalBillStore();
+    const bill = store.createDraftBill({ id: 'p1', name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id, { id: 'p1', name: 'Alex' });
+    expect(promoted.id).not.toBe(bill.id);
+    expect(store.getBill(bill.id)).toBeUndefined();
+  });
+
   it('lists bills newest first, even when created in the same millisecond', () => {
     const store = createLocalBillStore();
     const first = store.createDraftBill({ id: 'p1', name: 'Alex' });

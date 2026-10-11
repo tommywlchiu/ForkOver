@@ -58,27 +58,30 @@ export function Chip({
   selected,
   onPress,
   accessibilityLabel,
+  disabled,
 }: {
   testID: string;
   label: string;
   selected: boolean;
   onPress: () => void;
   accessibilityLabel?: string;
+  disabled?: boolean;
 }) {
   const theme = useThemeTokens();
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityState={{ selected }}
+      accessibilityState={{ selected, disabled: !!disabled }}
       style={({ pressed }) => [
         styles.chip,
         {
           backgroundColor: selected ? theme.primary : theme.surface,
           borderColor: selected ? theme.primary : theme.border,
-          opacity: pressed ? 0.8 : 1,
+          opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
         },
       ]}
     >

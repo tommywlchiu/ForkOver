@@ -13,10 +13,23 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
 
 ## App architecture (payer app, M3+)
 
-- `src/data/localBillStore.ts` defines the `BillStore` interface and today's in-memory
-  implementation; `src/state/bill.ts` is the zustand store screens use, wrapping it and calling
-  `src/lib/claims` + `src/lib/split` for derived state. Swapping in Supabase later means replacing
-  the implementation behind `BillStore`, not the screens or the zustand store's shape.
+- `src/data/localBillStore.ts` defines the `BillStore` interface and an in-memory implementation
+  (still used by its own tests); `src/data/supabaseBillStore.ts` (M4) is the real one `src/state/
+  bill.ts` wraps, calling `src/lib/claims` + `src/lib/split` for derived state. A draft bill still
+  mints a local id synchronously so screens can navigate immediately; `promoteBill` is the one
+  place that gets reconciled to the real server id - adopted from `parse-receipt`'s `done` event
+  for a scan, or minted by the `create_manual_bill` RPC for manual entry (`bills` has no INSERT
+  policy for a normal client) - flushing anything built up locally and rekeying `bill.ts`'s
+  `bills`/`renamedBillIds` so a screen still mounted on the old id keeps resolving. Every item/
+  fee/person gets a `crypto.randomUUID()` id up front so promotion never has to remap one a screen
+  already rendered. Edits write through optimistically once promoted (revert + `syncErrors` on
+  failure); a bill that's never promoted (every jest test driving `src/lib/receipt/standIn`, which
+  never supplies a `billId`) stays local-only, same as the old in-memory store always behaved.
+  `subscribeToBillChanges` (same module) wires realtime Postgres changes per bill; the native bill
+  screen subscribes on mount and refetches on reconnect (`useConnectivityStore`). The mock
+  Supabase client (`src/data/__mocks__/supabaseClient.ts`) backs the bill tables and
+  `create_manual_bill` with a tiny in-memory table/query-builder stand-in for exactly this - real
+  RLS is only ever proven against local Postgres (`supabase/tests/*.sql`).
 - `src/data/receiptReader.ts` is the one place a screen gets a receipt reader. It POSTs the image
   to the real `parse-receipt` Edge Function with the signed-in user's bearer token
   (`supabase.auth.getSession()`) and adapts its NDJSON `WireEvent` stream (handler.ts) into
