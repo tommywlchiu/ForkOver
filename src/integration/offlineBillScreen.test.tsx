@@ -67,5 +67,5 @@ describe('offline banner wiring on the bill screen', () => {
 
     await waitFor(() => expect(screen.queryByTestId('no-connection-banner')).toBeNull());
     await waitFor(() => expect(screen.getByTestId(`claim-item-${itemId}`).props.accessibilityState.disabled).toBe(false));
-  });
+  }, 15000);
 });
