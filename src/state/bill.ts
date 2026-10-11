@@ -4,22 +4,43 @@
  * (resolveClaims -> calculateSplit, SPEC 6.2/6.1). No math happens here.
  */
 import { create } from 'zustand';
-import { createLocalBillStore, type StoredBill } from '../data/localBillStore';
+import type { StoredBill } from '../data/localBillStore';
 import { getReceiptReader, type ImageCapture } from '../data/receiptReader';
+import { createSupabaseBillStore, fetchBillSnapshot, subscribeToBillChanges } from '../data/supabaseBillStore';
 import { resolveClaims, type ClaimMode, type ResolvedItem } from '../lib/claims/resolve';
 import { calculateSplit, type Fee, type Person, type SplitResult, type Tip } from '../lib/split/split';
 import type { TipSource } from '../lib/receipt/schema';
 import { analytics } from './analytics';
 import { useSessionStore } from './session';
 
-const dataStore = createLocalBillStore();
+const dataStore = createSupabaseBillStore((billId, message) => {
+  useBillStore.setState((state) => ({ syncErrors: { ...state.syncErrors, [billId]: message } }));
+});
 
 export type BillState = {
   bills: Record<string, StoredBill>;
+  /** Old (local, pre-promotion) bill id -> the real id it was promoted to (SPEC.md section 8, M4). */
+  renamedBillIds: Record<string, string>;
+  /** Last sync-failure message per bill, for a screen to show and dismiss (SPEC 8.3). */
+  syncErrors: Record<string, string>;
+  dismissSyncError: (billId: string) => void;
+  /**
+   * Bill ids whose promotion (local id -> real server id) was attempted and failed - a persistent
+   * state, not a one-off toast like `syncErrors`, since every future edit on an unpromoted bill
+   * stays local-only and never reaches the server until promotion succeeds (code review on #31).
+   */
+  unsyncedBillIds: Record<string, true>;
+  /** Retries promotion for a bill still stuck local-only (SPEC 8.3; `unsyncedBillIds`). */
+  retrySync: (billId: string) => Promise<void>;
 
   createDraftBill: (payer: { id: string; name: string }) => string;
   startScan: (billId: string, image: ImageCapture) => Promise<void>;
-  startManualEntry: (billId: string) => void;
+  /** Resolves to the real bill id once manual entry's draft bill exists server-side (SPEC 8, M4). */
+  startManualEntry: (billId: string) => Promise<string>;
+  /** Subscribes to realtime changes for this (real) bill id; call the returned function to unsubscribe. */
+  subscribeToBill: (billId: string) => () => void;
+  /** Refetches the full bill snapshot from Supabase (SPEC 8.3's reconnect behavior). */
+  refetchBill: (billId: string) => Promise<void>;
 
   addItem: (billId: string, item: { name: string; priceCents: number }) => void;
   updateItem: (billId: string, itemId: string, patch: Partial<{ name: string; priceCents: number }>) => void;
@@ -53,8 +74,59 @@ export const useBillStore = create<BillState>((set, get) => {
     set((state) => ({ bills: { ...state.bills, [billId]: { ...bill } } }));
   }
 
+  /**
+   * Closes the local-id-vs-server-id gap (SPEC.md section 8, M4): flushes a local draft to its
+   * real server-backed bill (minting one via `create_manual_bill` when `serverId` is omitted,
+   * adopting the scan's own id otherwise - see `supabaseBillStore.ts`'s module doc) and rekeys
+   * `bills`/`renamedBillIds` so a screen still mounted on the old (local) id keeps resolving to
+   * the same bill, just under its real id from here on.
+   *
+   * `promoteBill` never partially succeeds: on any failure it returns the same draft, unchanged,
+   * still under `localId` (see its own doc). That's the signal used below to tell success from
+   * failure, rather than trusting a boolean the lower layer would have to remember to report
+   * correctly too - `promoted.id === localId` is only ever true when nothing actually promoted.
+   */
+  async function promote(localId: string, serverId?: string): Promise<string> {
+    const draft = get().bills[localId];
+    if (!draft) return localId;
+    // promoteBill resolves the real payer identity itself (a `bill_people` read server-side), not
+    // from a caller-supplied value, so there's nothing to pass it here.
+    const promoted = await dataStore.promoteBill(localId, serverId);
+
+    if (promoted.id === localId) {
+      // Promotion failed; the draft is untouched and still local-only. Flag it so a screen can
+      // show a persistent "not synced" state instead of just the one-off `syncErrors` toast
+      // `onSyncError` already set.
+      set((state) => ({ bills: { ...state.bills, [localId]: promoted }, unsyncedBillIds: { ...state.unsyncedBillIds, [localId]: true } }));
+      return localId;
+    }
+
+    set((state) => {
+      const { [localId]: _removedBill, ...restBills } = state.bills;
+      const { [localId]: _removedFlag, ...restUnsynced } = state.unsyncedBillIds;
+      return {
+        bills: { ...restBills, [promoted.id]: promoted },
+        renamedBillIds: { ...state.renamedBillIds, [localId]: promoted.id },
+        unsyncedBillIds: restUnsynced,
+      };
+    });
+    return promoted.id;
+  }
+
   return {
     bills: {},
+    renamedBillIds: {},
+    syncErrors: {},
+    dismissSyncError: (billId) => {
+      set((state) => {
+        const { [billId]: _removed, ...rest } = state.syncErrors;
+        return { syncErrors: rest };
+      });
+    },
+    unsyncedBillIds: {},
+    retrySync: async (billId) => {
+      await promote(billId);
+    },
 
     createDraftBill: (payer) => {
       const bill = dataStore.createDraftBill(payer);
@@ -84,7 +156,17 @@ export const useBillStore = create<BillState>((set, get) => {
             return;
           } else {
             dataStore.finalizeScan(billId, event.receipt);
-            refresh(billId);
+            // Promote (and only then publish) before this scan's totals become visible: SPEC
+            // 7.1's wire protocol only names the real bill id in this `done` event, so this is
+            // the first moment a real id exists to sync up to (receiptReader.ts's `billId`).
+            // Publishing `refresh` first would let a screen interact with the bill under its
+            // stale local id while the promotion is still in flight. `event.billId` is only ever
+            // absent from the stand-in reader (src/lib/receipt/standIn), which every jest test
+            // drives instead of the network - the bill then just stays local-only, same as
+            // createLocalBillStore always behaved, matching `ParseEvent.billId`'s doc on why it's
+            // optional (receiptReader.ts).
+            const finalBillId = event.billId ? await promote(billId, event.billId) : billId;
+            refresh(finalBillId);
             analytics.record('parse_done', { itemCount: event.receipt.items.length });
             // Counts against the free-tier quota only on a successful scan (SPEC 7.1 step 5);
             // manual entry (startManualEntry) never reaches this branch, so it never counts.
@@ -97,7 +179,7 @@ export const useBillStore = create<BillState>((set, get) => {
       }
     },
 
-    startManualEntry: (billId) => {
+    startManualEntry: async (billId) => {
       dataStore.finalizeScan(billId, {
         isReceipt: true,
         merchantName: null,
@@ -113,6 +195,41 @@ export const useBillStore = create<BillState>((set, get) => {
         printedTotalCents: null,
         warnings: [],
       });
+      // Manual entry has no Edge Function in its path (SPEC.md section 8, M4): promote
+      // immediately, minting the server-side draft bill through `create_manual_bill` (no scan
+      // `done` event will ever supply an id here).
+      const realId = await promote(billId);
+      refresh(realId);
+      return realId;
+    },
+
+    subscribeToBill: (billId) => {
+      return subscribeToBillChanges(
+        billId,
+        (snapshot) => {
+          if (!snapshot) return;
+          // Write through `dataStore` first, not straight into zustand: every mutator
+          // (addItem, setClaim, ...) reads its starting point from `dataStore`'s own cache via
+          // `require(billId)`, not from zustand. A realtime update that only ever reached
+          // zustand would get silently clobbered by the next local edit, which would still
+          // mutate the stale pre-update object `dataStore` never learned about (code review on
+          // #31). `refresh` is what then copies `dataStore`'s now-current state into zustand -
+          // the same one-way flow every other method here already uses.
+          dataStore.replaceBill(snapshot);
+          refresh(billId);
+        },
+        // Read fresh on every refetch, not once when the subscription starts: `assemble()` falls
+        // back to this for fields with no DB column (tipSource, warnings, scanState, ...), so a
+        // stale closed-over snapshot would silently revert them to their mount-time values on
+        // every later refetch (code review on #31).
+        () => get().bills[billId],
+      );
+    },
+
+    refetchBill: async (billId) => {
+      const snapshot = await fetchBillSnapshot(billId, get().bills[billId]);
+      if (!snapshot) return;
+      dataStore.replaceBill(snapshot); // see subscribeToBill's comment: dataStore is the source of truth
       refresh(billId);
     },
 

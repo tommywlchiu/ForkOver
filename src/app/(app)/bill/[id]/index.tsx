@@ -9,16 +9,22 @@ import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Chip } from '../../../../components/Buttons';
+import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
+import { SyncStatusBanner } from '../../../../components/SyncStatusBanner';
 import { useThemeTokens } from '../../../../components/useThemeTokens';
 import { formatMoney } from '../../../../lib/money/format';
 import { claimStateMeta } from '../../../../lib/theme/tokens';
 import { useBillStore } from '../../../../state/bill';
+import { useResolvedBill } from '../../../../state/useResolvedBill';
 
 export default function BillScreen() {
   const theme = useThemeTokens();
   const { id: billId } = useLocalSearchParams<{ id: string }>();
 
-  const bill = useBillStore((s) => s.bills[billId]);
+  // `useResolvedBill` handles the local-id -> real-id rekey fallback, offline gating, and the
+  // realtime subscribe/reconnect-refetch lifecycle uniformly across every bill screen (code
+  // review on PR #31).
+  const { bill, controlsDisabled, syncError, dismissSyncError, notSynced, retrySync } = useResolvedBill(billId);
   const addPerson = useBillStore((s) => s.addPerson);
   const toggleMine = useBillStore((s) => s.toggleMine);
   const toggleShared = useBillStore((s) => s.toggleShared);
@@ -43,6 +49,9 @@ export default function BillScreen() {
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
+      <NoConnectionBanner />
+      <SyncStatusBanner notSynced={notSynced} retrySync={retrySync} syncError={syncError} dismissSyncError={dismissSyncError} />
+
       <Text style={[styles.title, { color: theme.text }]}>{bill.title}</Text>
       <Text style={{ color: theme.textMuted, marginBottom: 12 }}>Claiming as:</Text>
 
@@ -60,6 +69,7 @@ export default function BillScreen() {
           testID="add-person-button"
           label="+ Add person"
           selected={addingPerson}
+          disabled={controlsDisabled}
           onPress={() => setAddingPerson((v) => !v)}
         />
       </View>
@@ -73,13 +83,16 @@ export default function BillScreen() {
             placeholder="Name"
             placeholderTextColor={theme.textMuted}
             accessibilityLabel="New person's name"
+            editable={!controlsDisabled}
             style={[styles.nameInput, { color: theme.text, borderColor: theme.border }]}
           />
           <Text
             testID="confirm-add-person-button"
             accessibilityRole="button"
             accessibilityLabel="Add this person"
+            accessibilityState={{ disabled: controlsDisabled }}
             onPress={() => {
+              if (controlsDisabled) return;
               const trimmed = newPersonName.trim();
               if (trimmed) {
                 const id = addPerson(bill.id, trimmed);
@@ -88,7 +101,7 @@ export default function BillScreen() {
                 setAddingPerson(false);
               }
             }}
-            style={{ color: theme.primary, paddingHorizontal: 8 }}
+            style={{ color: controlsDisabled ? theme.textMuted : theme.primary, paddingHorizontal: 8 }}
           >
             Add
           </Text>
@@ -122,6 +135,7 @@ export default function BillScreen() {
               testID={`claim-item-${item.id}`}
               label="Mine"
               selected={mode === 'mine'}
+              disabled={controlsDisabled}
               accessibilityLabel={`Claim ${item.name} as mine`}
               onPress={() => toggleMine(bill.id, item.id, selectedPersonId)}
             />
@@ -129,6 +143,7 @@ export default function BillScreen() {
               testID={`share-item-${item.id}`}
               label="Share"
               selected={mode === 'shared'}
+              disabled={controlsDisabled}
               accessibilityLabel={`Claim ${item.name} as shared`}
               onPress={() => toggleShared(bill.id, item.id, selectedPersonId)}
             />

@@ -32,6 +32,12 @@ export default function Home() {
 
   const [tab, setTab] = useState<'mine' | 'shared'>('mine');
   const [consentVisible, setConsentVisible] = useState(false);
+  // `startManualEntry` now awaits a real network round trip (create_manual_bill, SPEC.md section
+  // 8, M4) before navigating; the RPC has no idempotency key (its own pgTAP test documents "a
+  // second call creates a second, separate draft bill" as expected in isolation), so a double-tap
+  // on a slow connection would otherwise mint two real, separate phantom bills (code review on
+  // PR #31).
+  const [manualEntryPending, setManualEntryPending] = useState(false);
 
   const payer = useMemo(() => ({ id: userId, name: capitalize(username) }), [userId, username]);
   const myBills = useMemo(
@@ -40,10 +46,16 @@ export default function Home() {
   );
   const scansLeft = Math.max(0, FREE_SCANS_PER_MONTH - scansUsedThisMonth);
 
-  const goManual = () => {
-    const billId = createDraftBill(payer);
-    startManualEntry(billId);
-    router.push({ pathname: '/bill/[id]/review', params: { id: billId } });
+  const goManual = async () => {
+    if (manualEntryPending) return;
+    setManualEntryPending(true);
+    try {
+      const billId = createDraftBill(payer);
+      const realId = await startManualEntry(billId);
+      router.push({ pathname: '/bill/[id]/review', params: { id: realId } });
+    } finally {
+      setManualEntryPending(false);
+    }
   };
 
   const startScanFlow = () => {
@@ -128,7 +140,7 @@ export default function Home() {
 
       <View style={styles.actions}>
         <PrimaryButton testID="scan-receipt-button" label="Scan receipt" onPress={startScanFlow} />
-        <SecondaryButton testID="enter-manually-button" label="Enter manually" onPress={goManual} />
+        <SecondaryButton testID="enter-manually-button" label="Enter manually" onPress={goManual} disabled={manualEntryPending} />
       </View>
 
       <ConsentSheet
