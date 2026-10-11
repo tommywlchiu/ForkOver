@@ -113,7 +113,7 @@ describe('createLocalBillStore', () => {
     const bill = store.createDraftBill({ id: 'p1', name: 'Alex' });
     store.addItem(bill.id, { name: 'Nachos', priceCents: 900 });
 
-    const promoted = await store.promoteBill(bill.id, { id: 'p1', name: 'Alex' }, 'server-bill-1');
+    const promoted = await store.promoteBill(bill.id, 'server-bill-1');
     expect(promoted.id).toBe('server-bill-1');
     expect(promoted.items).toHaveLength(1);
     expect(store.getBill(bill.id)).toBeUndefined();
@@ -123,7 +123,7 @@ describe('createLocalBillStore', () => {
   it('promotes a draft to a fresh local id when none is given', async () => {
     const store = createLocalBillStore();
     const bill = store.createDraftBill({ id: 'p1', name: 'Alex' });
-    const promoted = await store.promoteBill(bill.id, { id: 'p1', name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
     expect(promoted.id).not.toBe(bill.id);
     expect(store.getBill(bill.id)).toBeUndefined();
   });

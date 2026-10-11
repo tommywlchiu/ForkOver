@@ -89,7 +89,19 @@ export interface BillStore {
    * its path - SPEC.md section 8, M4 realtime-store task). Rekeys the stored bill from `localId` to
    * the result's `id` and returns it; this in-memory implementation treats that as a pure rename.
    */
-  promoteBill(localId: string, payer: { id: string; name: string }, serverId?: string): Promise<StoredBill>;
+  promoteBill(localId: string, serverId?: string): Promise<StoredBill>;
+
+  /**
+   * Replaces the cached state for an already-real bill id with `bill` (M4): the one way anything
+   * outside this store's own mutators - a realtime update, a reconnect refetch - writes into it.
+   * Without this, that data only ever reached the zustand store directly (`src/state/bill.ts`),
+   * leaving the data layer's own cache stale; the next local edit would then read that stale
+   * object via a mutator's own lookup, mutate it, and silently overwrite the realtime update on
+   * its way back out (code review on PR #31). Every mutator and every external writer goes
+   * through this same cache, so there is exactly one copy of a bill's state, not two kept in sync
+   * by convention.
+   */
+  replaceBill(bill: StoredBill): void;
 }
 
 type StoredFeeResult = Fee;
@@ -276,12 +288,16 @@ export function createLocalBillStore(): BillStore {
       require(billId).sentAt = Date.now();
     },
 
-    async promoteBill(localId, _payer, serverId) {
+    async promoteBill(localId, serverId) {
       const bill = require(localId);
       const promoted: StoredBill = { ...bill, id: serverId ?? makeLocalId('bill') };
       bills.delete(localId);
       bills.set(promoted.id, promoted);
       return promoted;
+    },
+
+    replaceBill(bill) {
+      bills.set(bill.id, bill);
     },
   };
 }

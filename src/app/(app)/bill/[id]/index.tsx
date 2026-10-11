@@ -6,7 +6,7 @@
  * buttons are payer controls for M5 and stay out of this screen for now.
  */
 import { Redirect, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Chip } from '../../../../components/Buttons';
 import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
@@ -21,43 +21,20 @@ export default function BillScreen() {
   const theme = useThemeTokens();
   const { id: billId } = useLocalSearchParams<{ id: string }>();
 
-  // `useResolvedBill` handles the local-id -> real-id rekey fallback and offline gating
-  // uniformly across every bill screen (code review on PR #31).
-  const { bill, controlsDisabled, isConnected, syncError, dismissSyncError, notSynced, retrySync } = useResolvedBill(billId);
+  // `useResolvedBill` handles the local-id -> real-id rekey fallback, offline gating, and the
+  // realtime subscribe/reconnect-refetch lifecycle uniformly across every bill screen (code
+  // review on PR #31).
+  const { bill, controlsDisabled, syncError, dismissSyncError, notSynced, retrySync } = useResolvedBill(billId);
   const addPerson = useBillStore((s) => s.addPerson);
   const toggleMine = useBillStore((s) => s.toggleMine);
   const toggleShared = useBillStore((s) => s.toggleShared);
   const getSplit = useBillStore((s) => s.getSplit);
   const getResolvedItems = useBillStore((s) => s.getResolvedItems);
   const claimFor = useBillStore((s) => s.claimFor);
-  const subscribeToBill = useBillStore((s) => s.subscribeToBill);
-  const refetchBill = useBillStore((s) => s.refetchBill);
 
   const [activePersonId, setActivePersonId] = useState<string | null>(null);
   const [addingPerson, setAddingPerson] = useState(false);
   const [newPersonName, setNewPersonName] = useState('');
-
-  // The resolved real bill id (not the raw route param - a scan's draft bill may still be mounted
-  // under its local id, which realtime has nothing to subscribe to), captured once so both
-  // effects below can depend on a plain string instead of the whole `bill` object re-running them
-  // on every field change.
-  const resolvedBillId = bill?.id;
-
-  // SPEC 8.3: subscribe to realtime changes for this bill once it's mounted; resubscribing (a
-  // fresh effect run) whenever the resolved bill id itself changes.
-  useEffect(() => {
-    if (!resolvedBillId) return undefined;
-    const unsubscribe = subscribeToBill(resolvedBillId);
-    return unsubscribe;
-  }, [resolvedBillId, subscribeToBill]);
-
-  // SPEC 8.3: "on reconnect, refetch the bill snapshot and resubscribe." The effect above already
-  // resubscribes on remount; reconnecting doesn't remount this screen, so refetch explicitly here.
-  const wasConnected = useRef(isConnected);
-  useEffect(() => {
-    if (isConnected && !wasConnected.current && resolvedBillId) void refetchBill(resolvedBillId);
-    wasConnected.current = isConnected;
-  }, [isConnected, resolvedBillId, refetchBill]);
 
   const split = bill ? getSplit(bill.id) : null;
   const resolvedItems = bill ? getResolvedItems(bill.id) : [];

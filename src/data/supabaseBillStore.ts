@@ -186,15 +186,35 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
    *  state instead of discarding that edit the moment the cache gets rekeyed to the server id
    *  (code review on #31, verified with a repro test). */
   const localVersions = new Map<string, number>();
+  /** localId -> the real id it was promoted to. A screen's event handler can still be holding a
+   *  bill's pre-promotion local id when it fires (it captured `bill.id` in a closure before
+   *  `promoteBill` rekeyed the cache); `require` below follows this alias instead of throwing on
+   *  a narrow but real race, so a stale handler's call still lands on the right bill rather than
+   *  crashing (code review on #31). */
+  const aliases = new Map<string, string>();
 
   function require(billId: string): StoredBill {
-    const bill = cache.get(billId);
+    const bill = cache.get(billId) ?? cache.get(aliases.get(billId) ?? '');
     if (!bill) throw new Error(`supabaseBillStore: unknown bill ${billId}`);
     return bill;
   }
 
   function set(bill: StoredBill) {
     cache.set(bill.id, bill);
+  }
+
+  /** Finalizes a successful promotion: rekeys the cache from `localId` to `snapshot.id`, remembers
+   *  the alias so a stale caller still holding `localId` resolves correctly, and clears the other
+   *  per-attempt bookkeeping. Shared by `promoteBill`'s normal and give-up-after-MAX_ATTEMPTS exits
+   *  so both do exactly the same bookkeeping. */
+  function finalizePromotion(localId: string, snapshot: StoredBill) {
+    nextPosition.set(snapshot.id, snapshot.items.length);
+    pendingServerIds.delete(localId);
+    localVersions.delete(localId);
+    cache.delete(localId);
+    set(snapshot);
+    promotedIds.add(snapshot.id);
+    aliases.set(localId, snapshot.id);
   }
 
   function reportError(billId: string, message: string) {
@@ -259,6 +279,10 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     getBill: (billId) => cache.get(billId),
     listBills: () => [...cache.values()].reverse().sort((a, b) => b.createdAt - a.createdAt),
+
+    replaceBill(bill) {
+      set(bill);
+    },
 
     beginScan(billId) {
       require(billId).scanState = 'streaming';
@@ -374,8 +398,11 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
         name: toMerge[0].name,
         priceCents: toMerge.reduce((sum, item) => sum + item.priceCents, 0),
       };
-      const previousItems = bill.items;
-      const previousClaims = bill.claims;
+      // Captured so a failed revert can restore exactly the items/claims this merge removed -
+      // not the entire array as it stood at this moment, which would also wipe out anything
+      // unrelated that gets added via a *different* channel (e.g. a concurrent addItem) while
+      // this merge's insert/delete round trip is in flight (code review on #31).
+      const removedClaims = bill.claims.filter((claim) => itemIds.includes(claim.itemId));
       bill.items = [...bill.items.filter((item) => !itemIds.includes(item.id)), merged];
       bill.claims = bill.claims.filter((claim) => !itemIds.includes(claim.itemId));
       if (promotedIds.has(billId)) {
@@ -393,8 +420,11 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
           if (insertError) {
             reportError(billId, "Couldn't merge those items. Try again.");
             if (writeGenerations.get(key) === generation) {
-              bill.items = previousItems;
-              bill.claims = previousClaims;
+              // Scoped revert: remove the (failed) merged item and put back exactly the items
+              // and claims this merge took out, leaving alone anything else that changed in
+              // `bill.items`/`bill.claims` since (a concurrent, unrelated addItem, say).
+              bill.items = [...bill.items.filter((item) => item.id !== merged.id), ...toMerge];
+              bill.claims = [...bill.claims, ...removedClaims];
             }
             return;
           }
@@ -641,7 +671,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
      *   finalizing and rekeying over a local edit that never made it to the server. Every write
      *   uses `upsert`, so re-running the same flush is always safe.
      */
-    async promoteBill(localId, payer, serverId) {
+    async promoteBill(localId, serverId) {
       const inFlight = promotionsInFlight.get(localId);
       if (inFlight) return inFlight;
 
@@ -728,12 +758,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
             continue;
           }
 
-          nextPosition.set(billId, snapshot.items.length);
-          pendingServerIds.delete(localId);
-          localVersions.delete(localId);
-          cache.delete(localId);
-          set(snapshot);
-          promotedIds.add(billId);
+          finalizePromotion(localId, snapshot);
           return snapshot;
         }
 
@@ -742,12 +767,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
         // bill local-only forever over an edge case this unlikely.
         const finalSnapshot = await fetchSnapshot(billId, draft);
         if (finalSnapshot) {
-          nextPosition.set(billId, finalSnapshot.items.length);
-          pendingServerIds.delete(localId);
-          localVersions.delete(localId);
-          cache.delete(localId);
-          set(finalSnapshot);
-          promotedIds.add(billId);
+          finalizePromotion(localId, finalSnapshot);
           return finalSnapshot;
         }
         reportError(localId, "Couldn't finish saving this bill. Try again.");

@@ -34,28 +34,40 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   front so promotion never has to remap one a screen already rendered - only the bill's own id and
   the payer's person id change (the draft's payer id is the raw auth user id; the real one is
   `bill_people.id`, which claims reference, and `promoteBill` remaps it in every claim it flushes).
+  A stale screen handler still holding a bill's pre-promotion local id (captured in a closure
+  before `promoteBill` rekeyed the cache) redirects to the promoted bill via an alias map instead
+  of throwing on that narrow race.
   `src/state/useResolvedBill.ts` is the one hook every bill screen uses for the rekey fallback,
-  offline-disabling controls, and a sync error or persistent "not synced" retry
-  (`unsyncedBillIds`/`retrySync`) - its own `SyncStatusBanner` component (`src/components/`) is the
-  one place that state actually renders. Add a new bill screen through both, not a hand-wired
-  `s.bills[id]` read and copy-pasted JSX, or it will silently skip them (code review on PR #31
-  found exactly this gap, twice, once in the data and once in the rendering). Edits write through
-  optimistically once promoted via the shared `writeThrough` helper (revert + `syncErrors` on
-  failure); it tags each write with a per-field "channel" and generation counter so a slow, now-
-  stale write's failure can never roll back a field a newer write already updated. A bill that's
-  never promoted (every jest test driving `src/lib/receipt/standIn`, which never supplies a
-  `billId`) stays local-only, same as the old in-memory store always behaved.
+  offline-disabling controls, a sync error or persistent "not synced" retry
+  (`unsyncedBillIds`/`retrySync`), *and* the realtime subscribe-on-mount / refetch-on-reconnect
+  lifecycle (SPEC 8.3) - its own `SyncStatusBanner` component (`src/components/`) is the one place
+  the sync state actually renders. Add a new bill screen through both, not a hand-wired
+  `s.bills[id]` read, copy-pasted JSX, and its own `useEffect`s, or it will silently skip them -
+  code review on PR #31 found this same "fixed on one screen, not the other two" shape three
+  separate times (the rekey fallback, offline gating, then realtime) before it got centralized.
+  **`dataStore` (this module's own cache), not zustand, is the single source of truth**: every
+  mutator reads its starting point from `dataStore` via `require(billId)`, so anything that writes
+  a bill's state from outside this module - a realtime update, a reconnect refetch - has to go
+  through `dataStore.replaceBill()` first (`src/state/bill.ts`'s `refresh()` is what then copies
+  it into zustand, the same one-way flow every mutator already uses). Writing a realtime snapshot
+  straight into zustand instead is exactly the bug this was: the data layer's cache never learns
+  about it, so the next local edit of any kind reads the stale pre-update object, mutates it, and
+  silently erases the realtime update on its way back out. Edits write through optimistically once
+  promoted via the shared `writeThrough` helper (revert + `syncErrors` on failure); it tags each
+  write with a per-field "channel" and generation counter so a slow, now-stale write's failure can
+  never roll back a field a newer write already updated. A bill that's never promoted (every jest
+  test driving `src/lib/receipt/standIn`, which never supplies a `billId`) stays local-only, same
+  as the old in-memory store always behaved.
   `subscribeToBillChanges` (same module) wires realtime Postgres changes per bill, debounced and
   guarded so an older in-flight refetch can never overwrite a newer one's result
   (`createDebouncedLatestFetcher`, independently unit-tested since the mock realtime channel never
   actually fires in tests) - this requires every bill table to be in the `supabase_realtime`
   publication (`supabase/migrations/20261011000000_enable_bill_realtime.sql`; Realtime fans out
   nothing for a table that isn't, silently, so a new bill-scoped table needs the same migration
-  treatment); the native bill screen subscribes on mount and refetches on reconnect
-  (`useConnectivityStore`). The mock Supabase client (`src/data/__mocks__/supabaseClient.ts`)
-  backs the bill tables and `create_manual_bill` with a tiny in-memory table/query-builder
-  stand-in for exactly this (its table list imports the dependency-free `src/data/billTables.ts`,
-  not `supabaseBillStore.ts` directly - that used to go through `supabaseBillStore.ts` ->
+  treatment). The mock Supabase client (`src/data/__mocks__/supabaseClient.ts`) backs the bill
+  tables and `create_manual_bill` with a tiny in-memory table/query-builder stand-in for exactly
+  this (its table list imports the dependency-free `src/data/billTables.ts`, not
+  `supabaseBillStore.ts` directly - that used to go through `supabaseBillStore.ts` ->
   `./supabaseClient`, which Jest resolves back to the mock itself, a circular import that silently
   left the list `undefined`) - real RLS is only ever proven against local Postgres
   (`supabase/tests/*.sql`).

@@ -42,7 +42,7 @@ describe('createSupabaseBillStore', () => {
     store.addItem(bill.id, { name: 'Nachos', priceCents: 900 });
     store.addFee(bill.id, { label: 'Service', cents: 100, split: 'proportional' });
 
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
 
     expect(promoted.id).not.toBe(bill.id);
     expect(store.getBill(bill.id)).toBeUndefined();
@@ -74,7 +74,7 @@ describe('createSupabaseBillStore', () => {
     await supabase.from('bills').insert({ id: 'server-bill-1', payer_user_id: userId, status: 'draft' });
     await supabase.from('bill_people').insert({ bill_id: 'server-bill-1', user_id: userId, display_name: 'Alex', kind: 'payer' });
 
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' }, 'server-bill-1');
+    const promoted = await store.promoteBill(bill.id, 'server-bill-1');
 
     expect(promoted.id).toBe('server-bill-1');
     expect(rpcSpy).not.toHaveBeenCalled();
@@ -85,7 +85,7 @@ describe('createSupabaseBillStore', () => {
     const userId = await signIn();
     const store = createSupabaseBillStore();
     const bill = store.createDraftBill({ id: userId, name: 'Alex' });
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
 
     store.setDiscount(promoted.id, 250);
     // The fire-and-forget write needs a tick to land.
@@ -100,7 +100,7 @@ describe('createSupabaseBillStore', () => {
     const onSyncError = jest.fn();
     const storeWithErrors = createSupabaseBillStore(onSyncError);
     const draft = storeWithErrors.createDraftBill({ id: userId, name: 'Alex' });
-    const otherPromoted = await storeWithErrors.promoteBill(draft.id, { id: userId, name: 'Alex' });
+    const otherPromoted = await storeWithErrors.promoteBill(draft.id);
 
     const fromSpy = jest.spyOn(supabase, 'from').mockReturnValueOnce({
       insert: () => ({
@@ -126,7 +126,7 @@ describe('createSupabaseBillStore', () => {
     const item = store.addItem(bill.id, { name: 'Ramen', priceCents: 1200 });
     store.setClaim(bill.id, item.id, userId, 'mine', userId);
 
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
 
     expect(promoted.claims).toEqual([{ itemId: item.id, personId: promoted.payerId, mode: 'mine', createdBy: promoted.payerId }]);
     const { data: claimRows } = await supabase.from('claims').select('item_id,mode').eq('bill_id', promoted.id);
@@ -153,7 +153,7 @@ describe('createSupabaseBillStore', () => {
       } as unknown as ReturnType<typeof supabase.from>;
     });
 
-    const failed = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const failed = await store.promoteBill(bill.id);
 
     expect(failed.id).toBe(bill.id); // unchanged: still the local draft, not rekeyed
     expect(store.getBill(bill.id)).toBe(failed);
@@ -164,7 +164,7 @@ describe('createSupabaseBillStore', () => {
     // minted - `create_manual_bill` is never called again for the same local draft, so a flaky
     // retry can't mint a second, orphaned bill.
     const rpcSpy = jest.spyOn(supabase, 'rpc');
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
     expect(promoted.id).not.toBe(bill.id);
     expect(promoted.items).toHaveLength(1);
     expect(rpcSpy).not.toHaveBeenCalled();
@@ -176,7 +176,7 @@ describe('createSupabaseBillStore', () => {
     const onSyncError = jest.fn();
     const store = createSupabaseBillStore(onSyncError);
     const bill = store.createDraftBill({ id: userId, name: 'Alex' });
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
     const a = store.addItem(promoted.id, { name: 'Beer', priceCents: 500 });
     const b = store.addItem(promoted.id, { name: 'Beer', priceCents: 500 });
     await Promise.resolve();
@@ -218,7 +218,7 @@ describe('createSupabaseBillStore', () => {
     const bill = store.createDraftBill({ id: userId, name: 'Alex' });
     const item = store.addItem(bill.id, { name: 'Ramen', priceCents: 1200 });
 
-    const promotionPromise = store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promotionPromise = store.promoteBill(bill.id);
     // Land an edit after promotion has started (past its RPC/people-lookup awaits) but before it
     // can possibly have finished its flush-and-confirm cycle.
     await Promise.resolve();
@@ -238,7 +238,7 @@ describe('createSupabaseBillStore', () => {
     const bill = store.createDraftBill({ id: userId, name: 'Alex' });
 
     const rpcSpy = jest.spyOn(supabase, 'rpc');
-    const [a, b] = await Promise.all([store.promoteBill(bill.id, { id: userId, name: 'Alex' }), store.promoteBill(bill.id, { id: userId, name: 'Alex' })]);
+    const [a, b] = await Promise.all([store.promoteBill(bill.id), store.promoteBill(bill.id)]);
 
     expect(a.id).toBe(b.id);
     expect(rpcSpy).toHaveBeenCalledTimes(1);
@@ -255,7 +255,7 @@ describe('createSupabaseBillStore', () => {
     const bailey = store.addPerson(bill.id, 'Bailey');
     store.setClaim(bill.id, item.id, bailey.id, 'mine', userId);
 
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
 
     expect(promoted.people.some((p) => p.name === 'Bailey')).toBe(true);
     const { data: peopleRows } = await supabase.from('bill_people').select('display_name').eq('bill_id', promoted.id);
@@ -267,7 +267,7 @@ describe('createSupabaseBillStore', () => {
     const userId = await signIn();
     const store = createSupabaseBillStore();
     const bill = store.createDraftBill({ id: userId, name: 'Alex' });
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
 
     let resolveFirst!: (v: { error: { message: string } | null }) => void;
     const firstWrite = new Promise<{ error: { message: string } | null }>((resolve) => {
@@ -300,7 +300,7 @@ describe('createSupabaseBillStore', () => {
     const userId = await signIn();
     const store = createSupabaseBillStore();
     const bill = store.createDraftBill({ id: userId, name: 'Alex' });
-    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
 
     store.addItem(promoted.id, { name: 'A', priceCents: 100 });
     const b = store.addItem(promoted.id, { name: 'B', priceCents: 200 });
@@ -319,6 +319,86 @@ describe('createSupabaseBillStore', () => {
     const { data: rows } = await supabase.from('bill_items').select('name,position').eq('bill_id', promoted.id);
     const positions = (rows as { name: string; position: number }[]).map((r) => r.position);
     expect(new Set(positions).size).toBe(positions.length);
+  });
+
+  // Third round of code review on PR #31: dataStore's own cache and zustand kept two separate
+  // copies of a bill, synced one direction only - a realtime update that only ever reached
+  // zustand directly would get silently clobbered by the next local edit, which still read (and
+  // mutated) the stale pre-update object dataStore's own cache never learned about.
+  it('replaceBill makes a subsequent mutation build on the replaced state, not a stale earlier one', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
+
+    // Simulates a realtime update landing: something external (a second client's edit) added an
+    // item server-side, and the snapshot comes back through `replaceBill` - exactly how
+    // `src/state/bill.ts`'s `subscribeToBill`/`refetchBill` now apply a realtime snapshot.
+    const remoteItem = { id: crypto.randomUUID(), name: 'Gyoza', priceCents: 600 };
+    store.replaceBill({ ...promoted, items: [...promoted.items, remoteItem] });
+
+    // A local edit right after must still see that remote item - if the mutator read from a
+    // stale cache entry `replaceBill` never updated, this would silently drop it.
+    const local = store.addItem(promoted.id, { name: 'Edamame', priceCents: 400 });
+
+    const current = store.getBill(promoted.id)!;
+    expect(current.items.map((i) => i.id).sort()).toEqual([remoteItem.id, local.id].sort());
+  });
+
+  it('redirects a mutator call against a bill\'s old local id to its promoted bill (a stale handler closure)', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const localId = bill.id;
+    const promoted = await store.promoteBill(localId);
+
+    // A screen's event handler captured `localId` in a closure before promotion rekeyed the
+    // cache (a narrow but real race - code review on #31). This must not throw.
+    expect(() => store.addItem(localId, { name: 'Late item', priceCents: 100 })).not.toThrow();
+
+    const current = store.getBill(promoted.id)!;
+    expect(current.items.some((i) => i.name === 'Late item')).toBe(true);
+  });
+
+  it("mergeItems's revert on failure restores only what it removed, not a concurrent unrelated addItem", async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
+    const a = store.addItem(promoted.id, { name: 'Beer', priceCents: 500 });
+    const b = store.addItem(promoted.id, { name: 'Beer', priceCents: 500 });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The merge's insert fails; a concurrent, unrelated addItem is made while it's in flight.
+    const realFrom = supabase.from.bind(supabase);
+    let insertCalls = 0;
+    const fromSpy = jest.spyOn(supabase, 'from').mockImplementation((table: string) => {
+      const real = realFrom(table);
+      if (table !== 'bill_items') return real;
+      return {
+        ...real,
+        insert: (payload: unknown) => {
+          insertCalls += 1;
+          // Only the merge's own insert (the first on this table after the mock is installed)
+          // fails; a concurrent addItem's insert still succeeds via the real fake table.
+          if (insertCalls === 1) return Promise.resolve({ error: { message: 'conflict' } });
+          return real.insert(payload as never);
+        },
+      } as unknown as ReturnType<typeof supabase.from>;
+    });
+
+    store.mergeItems(promoted.id, [a.id, b.id]);
+    const unrelated = store.addItem(promoted.id, { name: 'Soda', priceCents: 300 });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    fromSpy.mockRestore();
+
+    const current = store.getBill(promoted.id)!;
+    // The merge reverted to its two original items; the concurrent, unrelated addItem survived.
+    expect(current.items.map((i) => i.name).sort()).toEqual(['Beer', 'Beer', 'Soda']);
+    expect(current.items.some((i) => i.id === unrelated.id)).toBe(true);
   });
 });
 

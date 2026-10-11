@@ -89,11 +89,9 @@ export const useBillStore = create<BillState>((set, get) => {
   async function promote(localId: string, serverId?: string): Promise<string> {
     const draft = get().bills[localId];
     if (!draft) return localId;
-    const payerPerson = draft.people.find((p) => p.kind === 'payer') ?? draft.people[0];
-    // Every bill always has a payer at index 0 with kind 'payer' (createDraftBill's own
-    // invariant); the `?? draft.people[0]` fallback only exists in case a future change breaks
-    // that, so this never has to throw on a `payerPerson` that's somehow undefined.
-    const promoted = await dataStore.promoteBill(localId, { id: draft.payerId, name: payerPerson?.name ?? '' }, serverId);
+    // promoteBill resolves the real payer identity itself (a `bill_people` read server-side), not
+    // from a caller-supplied value, so there's nothing to pass it here.
+    const promoted = await dataStore.promoteBill(localId, serverId);
 
     if (promoted.id === localId) {
       // Promotion failed; the draft is untouched and still local-only. Flag it so a screen can
@@ -210,7 +208,15 @@ export const useBillStore = create<BillState>((set, get) => {
         billId,
         (snapshot) => {
           if (!snapshot) return;
-          set((state) => ({ bills: { ...state.bills, [billId]: snapshot } }));
+          // Write through `dataStore` first, not straight into zustand: every mutator
+          // (addItem, setClaim, ...) reads its starting point from `dataStore`'s own cache via
+          // `require(billId)`, not from zustand. A realtime update that only ever reached
+          // zustand would get silently clobbered by the next local edit, which would still
+          // mutate the stale pre-update object `dataStore` never learned about (code review on
+          // #31). `refresh` is what then copies `dataStore`'s now-current state into zustand -
+          // the same one-way flow every other method here already uses.
+          dataStore.replaceBill(snapshot);
+          refresh(billId);
         },
         // Read fresh on every refetch, not once when the subscription starts: `assemble()` falls
         // back to this for fields with no DB column (tipSource, warnings, scanState, ...), so a
@@ -222,7 +228,9 @@ export const useBillStore = create<BillState>((set, get) => {
 
     refetchBill: async (billId) => {
       const snapshot = await fetchBillSnapshot(billId, get().bills[billId]);
-      if (snapshot) set((state) => ({ bills: { ...state.bills, [billId]: snapshot } }));
+      if (!snapshot) return;
+      dataStore.replaceBill(snapshot); // see subscribeToBill's comment: dataStore is the source of truth
+      refresh(billId);
     },
 
     addItem: (billId, item) => {
