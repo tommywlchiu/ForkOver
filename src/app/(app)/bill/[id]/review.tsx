@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Chip, PrimaryButton } from '../../../../components/Buttons';
 import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
+import { SyncStatusBanner } from '../../../../components/SyncStatusBanner';
 import { useThemeTokens } from '../../../../components/useThemeTokens';
 import { formatMoney } from '../../../../lib/money/format';
 import { parseMoneyInput } from '../../../../lib/money/parseMoneyInput';
@@ -113,21 +114,7 @@ export default function Review() {
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
       <NoConnectionBanner />
-      {notSynced && (
-        <View style={styles.row}>
-          <Text testID="bill-not-synced" style={{ color: theme.danger, flex: 1 }}>
-            This bill hasn&apos;t saved yet.
-          </Text>
-          <Text testID="retry-sync-button" accessibilityRole="button" accessibilityLabel="Retry saving this bill" onPress={retrySync} style={{ color: theme.primary }}>
-            Retry
-          </Text>
-        </View>
-      )}
-      {syncError && (
-        <Text testID="bill-sync-error" accessibilityLiveRegion="assertive" onPress={dismissSyncError} style={{ color: theme.danger, paddingVertical: 6 }}>
-          {syncError}
-        </Text>
-      )}
+      <SyncStatusBanner notSynced={notSynced} retrySync={retrySync} syncError={syncError} dismissSyncError={dismissSyncError} />
 
       <Text style={[styles.title, { color: theme.text }]}>{bill.merchantName ?? 'Review the bill'}</Text>
 

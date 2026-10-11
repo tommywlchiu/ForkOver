@@ -56,14 +56,6 @@ export interface BillStore {
   createDraftBill(payer: { id: string; name: string }): StoredBill;
   getBill(billId: string): StoredBill | undefined;
   listBills(): StoredBill[];
-  /**
-   * Whether this bill's state is fully synced to a real server-side row (M4; always `true` here,
-   * since this in-memory implementation has no server to sync to - every bill is "synced" the
-   * instant it exists). The Supabase-backed implementation uses this to tell a screen "promotion
-   * itself never completed" apart from a bill that just hasn't been edited since, so it can show
-   * a persistent "not synced" state rather than only a one-off error toast.
-   */
-  isPromoted(billId: string): boolean;
 
   beginScan(billId: string): void;
   addStreamedLine(billId: string, line: ParsedLineItem): StoredItem[];
@@ -153,7 +145,6 @@ export function createLocalBillStore(): BillStore {
     // Reverse insertion order first so a tied createdAt (same millisecond)
     // still puts the most recently created bill first (stable sort).
     listBills: () => [...bills.values()].reverse().sort((a, b) => b.createdAt - a.createdAt),
-    isPromoted: () => true,
 
     beginScan(billId) {
       require(billId).scanState = 'streaming';

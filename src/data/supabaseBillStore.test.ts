@@ -6,7 +6,7 @@
  * unpromoted one stays local-only, same as `createLocalBillStore` always did.
  */
 import { supabase } from './supabaseClient';
-import { createSupabaseBillStore } from './supabaseBillStore';
+import { createDebouncedLatestFetcher, createSupabaseBillStore } from './supabaseBillStore';
 
 jest.mock('./supabaseClient');
 const { __resetFakeSupabase } = jest.requireMock('./supabaseClient') as { __resetFakeSupabase: () => void };
@@ -206,5 +206,165 @@ describe('createSupabaseBillStore', () => {
     // The reconciling refetch picked up the server's actual (duplicated) state: the merged item
     // plus both stale originals the failed delete left behind.
     expect(store.getBill(promoted.id)!.items.map((i) => i.name).sort()).toEqual(['Beer', 'Beer', 'Beer']);
+  });
+
+  // The four tests below cover the concurrency bugs found in the second code-review round on
+  // PR #31: an edit landing mid-promotion, two concurrent promotions, people never being flushed,
+  // and a stale write's rollback clobbering a newer one.
+
+  it('keeps an edit that lands on the local id while promotion is still in flight', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const item = store.addItem(bill.id, { name: 'Ramen', priceCents: 1200 });
+
+    const promotionPromise = store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+    // Land an edit after promotion has started (past its RPC/people-lookup awaits) but before it
+    // can possibly have finished its flush-and-confirm cycle.
+    await Promise.resolve();
+    await Promise.resolve();
+    store.updateItem(bill.id, item.id, { name: 'Ramen (extra noodles)' });
+
+    const promoted = await promotionPromise;
+
+    expect(promoted.items.find((i) => i.id === item.id)?.name).toBe('Ramen (extra noodles)');
+    const { data: row } = await supabase.from('bill_items').select('name').eq('id', item.id).maybeSingle();
+    expect(row).toMatchObject({ name: 'Ramen (extra noodles)' });
+  });
+
+  it('a concurrent second promoteBill call never mints a second bill (double-tap Retry)', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+
+    const rpcSpy = jest.spyOn(supabase, 'rpc');
+    const [a, b] = await Promise.all([store.promoteBill(bill.id, { id: userId, name: 'Alex' }), store.promoteBill(bill.id, { id: userId, name: 'Alex' })]);
+
+    expect(a.id).toBe(b.id);
+    expect(rpcSpy).toHaveBeenCalledTimes(1);
+    const { data: bills } = await supabase.from('bills').select('id').eq('payer_user_id', userId);
+    expect(bills).toHaveLength(1);
+    rpcSpy.mockRestore();
+  });
+
+  it('flushes named people too, so a claim referencing one does not hit a foreign-key violation', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const item = store.addItem(bill.id, { name: 'Ramen', priceCents: 1200 });
+    const bailey = store.addPerson(bill.id, 'Bailey');
+    store.setClaim(bill.id, item.id, bailey.id, 'mine', userId);
+
+    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+
+    expect(promoted.people.some((p) => p.name === 'Bailey')).toBe(true);
+    const { data: peopleRows } = await supabase.from('bill_people').select('display_name').eq('bill_id', promoted.id);
+    expect(peopleRows).toEqual(expect.arrayContaining([expect.objectContaining({ display_name: 'Bailey' })]));
+    expect(promoted.claims).toEqual([{ itemId: item.id, personId: bailey.id, mode: 'mine', createdBy: promoted.payerId }]);
+  });
+
+  it("does not let an older, now-stale write's failure revert a newer write to the same field", async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+
+    let resolveFirst!: (v: { error: { message: string } | null }) => void;
+    const firstWrite = new Promise<{ error: { message: string } | null }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const realFrom = supabase.from.bind(supabase);
+    let billsCallCount = 0;
+    const fromSpy = jest.spyOn(supabase, 'from').mockImplementation((table: string) => {
+      if (table !== 'bills') return realFrom(table);
+      billsCallCount += 1;
+      if (billsCallCount === 1) return { update: () => ({ eq: () => firstWrite }) } as unknown as ReturnType<typeof supabase.from>;
+      return realFrom(table);
+    });
+
+    store.setDiscount(promoted.id, 100); // slower write, will fail
+    store.setDiscount(promoted.id, 200); // faster write to the same field, succeeds first
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(store.getBill(promoted.id)!.discountCents).toBe(200);
+
+    resolveFirst({ error: { message: 'stale conflict' } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.getBill(promoted.id)!.discountCents).toBe(200);
+    fromSpy.mockRestore();
+  });
+
+  it('never reuses a bill_items position after a remove, even across a later add', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id, { id: userId, name: 'Alex' });
+
+    store.addItem(promoted.id, { name: 'A', priceCents: 100 });
+    const b = store.addItem(promoted.id, { name: 'B', priceCents: 200 });
+    store.addItem(promoted.id, { name: 'C', priceCents: 300 });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    store.removeItem(promoted.id, b.id);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    store.addItem(promoted.id, { name: 'D', priceCents: 400 });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const { data: rows } = await supabase.from('bill_items').select('name,position').eq('bill_id', promoted.id);
+    const positions = (rows as { name: string; position: number }[]).map((r) => r.position);
+    expect(new Set(positions).size).toBe(positions.length);
+  });
+});
+
+describe('createDebouncedLatestFetcher', () => {
+  it('applies only the most recently scheduled call, even if an earlier one resolves later', async () => {
+    jest.useFakeTimers();
+    try {
+      const results: number[] = [];
+      const resolvers: ((value: number) => void)[] = [];
+      const fetchFn = jest.fn(() => new Promise<number>((resolve) => resolvers.push(resolve)));
+      const { schedule } = createDebouncedLatestFetcher(fetchFn, (r) => results.push(r), 10);
+
+      schedule();
+      jest.advanceTimersByTime(10);
+      schedule();
+      jest.advanceTimersByTime(10);
+      expect(resolvers).toHaveLength(2);
+
+      // The later-scheduled request's fetch resolves first (plausible network jitter); the
+      // earlier one resolves after.
+      resolvers[1](200);
+      await Promise.resolve();
+      resolvers[0](100);
+      await Promise.resolve();
+
+      expect(results).toEqual([200]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('debounces several schedule() calls within the window into a single fetch', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchFn = jest.fn(async () => 'ok');
+      const { schedule } = createDebouncedLatestFetcher(fetchFn, () => {}, 10);
+
+      schedule();
+      schedule();
+      schedule();
+      jest.advanceTimersByTime(10);
+      await Promise.resolve();
+
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

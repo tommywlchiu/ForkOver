@@ -11,6 +11,7 @@ import { Share as RNShare, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { PrimaryButton, SecondaryButton } from '../../../../components/Buttons';
 import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
+import { SyncStatusBanner } from '../../../../components/SyncStatusBanner';
 import { useThemeTokens } from '../../../../components/useThemeTokens';
 import { useBillStore } from '../../../../state/bill';
 import { useResolvedBill } from '../../../../state/useResolvedBill';
@@ -54,21 +55,7 @@ export default function ShareScreen() {
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <NoConnectionBanner />
-      {notSynced && (
-        <View style={styles.row}>
-          <Text testID="bill-not-synced" style={{ color: theme.danger, flex: 1 }}>
-            This bill hasn&apos;t saved yet.
-          </Text>
-          <Text testID="retry-sync-button" accessibilityRole="button" accessibilityLabel="Retry saving this bill" onPress={retrySync} style={{ color: theme.primary }}>
-            Retry
-          </Text>
-        </View>
-      )}
-      {syncError && (
-        <Text testID="bill-sync-error" accessibilityLiveRegion="assertive" onPress={dismissSyncError} style={{ color: theme.danger, textAlign: 'center' }}>
-          {syncError}
-        </Text>
-      )}
+      <SyncStatusBanner notSynced={notSynced} retrySync={retrySync} syncError={syncError} dismissSyncError={dismissSyncError} />
 
       <Text style={[styles.title, { color: theme.text }]}>Share this bill</Text>
 
@@ -106,7 +93,6 @@ export default function ShareScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 24, paddingTop: 60, gap: 12, alignItems: 'stretch' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   title: { fontSize: 24, fontWeight: '800', textAlign: 'center', marginBottom: 8 },
   qrWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
   actions: { gap: 10, marginTop: 16 },

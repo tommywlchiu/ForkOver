@@ -19,31 +19,46 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   mints a local id synchronously so screens can navigate immediately; `promoteBill` is the one
   place that gets reconciled to the real server id - adopted from `parse-receipt`'s `done` event
   for a scan, or minted by the `create_manual_bill` RPC for manual entry (`bills` has no INSERT
-  policy for a normal client). It flushes anything built up locally with `upsert` (so a retry is
-  safe) and then re-reads the bill with `fetchSnapshot` rather than trusting its own writes - on
-  any failure (the RPC, a flush write, or the read-back) it leaves the draft exactly as it was,
-  still local-only, so a caller can retry; only on full success does it rekey `bill.ts`'s
-  `bills`/`renamedBillIds` so a screen still mounted on the old id keeps resolving. Every item/
-  fee/person/claim gets a `crypto.randomUUID()` id up front so promotion never has to remap one a
-  screen already rendered - only the bill's own id and the payer's person id change (the draft's
-  payer id is the raw auth user id; the real one is `bill_people.id`, which claims reference).
+  policy for a normal client). It flushes anything built up locally (items, fees, named people,
+  claims) with `upsert` (so re-flushing is always safe) and then re-reads the bill with
+  `fetchSnapshot` rather than trusting its own writes - on any failure (the RPC, a flush write, or
+  the read-back) it leaves the draft exactly as it was, still local-only, so a caller can retry.
+  It's also safe under concurrency, both found and fixed after code review: a second concurrent
+  `promoteBill` call for the same local id awaits the *same* in-flight attempt instead of starting
+  its own (`create_manual_bill` has no idempotency key, so two real attempts would mint two
+  separate, permanently orphaned bills); and an edit landing on the local id mid-flush is never
+  lost - the flush loop compares a per-bill version counter before and after its await window and
+  re-flushes with whatever's current if anything changed, rather than finalizing over it. Only on
+  full, stable success does it rekey `bill.ts`'s `bills`/`renamedBillIds` so a screen still mounted
+  on the old id keeps resolving. Every item/fee/person/claim gets a `crypto.randomUUID()` id up
+  front so promotion never has to remap one a screen already rendered - only the bill's own id and
+  the payer's person id change (the draft's payer id is the raw auth user id; the real one is
+  `bill_people.id`, which claims reference, and `promoteBill` remaps it in every claim it flushes).
   `src/state/useResolvedBill.ts` is the one hook every bill screen uses for the rekey fallback,
-  offline-disabling controls, and showing a sync error or a persistent "not synced" retry
-  (`unsyncedBillIds`/`retrySync`) - add a new bill screen through it, not a hand-wired `s.bills
-  [id]` read, or it will silently skip all three (code review on PR #31 found each missing from a
-  different screen). Edits write through optimistically once promoted (revert + `syncErrors` on
-  failure, via the shared `writeThrough` helper); a bill that's never promoted (every jest test
-  driving `src/lib/receipt/standIn`, which never supplies a `billId`) stays local-only, same as
-  the old in-memory store always behaved. `subscribeToBillChanges` (same module) wires realtime
-  Postgres changes per bill - this requires every bill table to be in the `supabase_realtime`
+  offline-disabling controls, and a sync error or persistent "not synced" retry
+  (`unsyncedBillIds`/`retrySync`) - its own `SyncStatusBanner` component (`src/components/`) is the
+  one place that state actually renders. Add a new bill screen through both, not a hand-wired
+  `s.bills[id]` read and copy-pasted JSX, or it will silently skip them (code review on PR #31
+  found exactly this gap, twice, once in the data and once in the rendering). Edits write through
+  optimistically once promoted via the shared `writeThrough` helper (revert + `syncErrors` on
+  failure); it tags each write with a per-field "channel" and generation counter so a slow, now-
+  stale write's failure can never roll back a field a newer write already updated. A bill that's
+  never promoted (every jest test driving `src/lib/receipt/standIn`, which never supplies a
+  `billId`) stays local-only, same as the old in-memory store always behaved.
+  `subscribeToBillChanges` (same module) wires realtime Postgres changes per bill, debounced and
+  guarded so an older in-flight refetch can never overwrite a newer one's result
+  (`createDebouncedLatestFetcher`, independently unit-tested since the mock realtime channel never
+  actually fires in tests) - this requires every bill table to be in the `supabase_realtime`
   publication (`supabase/migrations/20261011000000_enable_bill_realtime.sql`; Realtime fans out
   nothing for a table that isn't, silently, so a new bill-scoped table needs the same migration
   treatment); the native bill screen subscribes on mount and refetches on reconnect
   (`useConnectivityStore`). The mock Supabase client (`src/data/__mocks__/supabaseClient.ts`)
   backs the bill tables and `create_manual_bill` with a tiny in-memory table/query-builder
-  stand-in for exactly this (its table list imports `supabaseBillStore.ts`'s `ALL_BILL_TABLES`
-  rather than redeclaring it, so the two can't drift) - real RLS is only ever proven against local
-  Postgres (`supabase/tests/*.sql`).
+  stand-in for exactly this (its table list imports the dependency-free `src/data/billTables.ts`,
+  not `supabaseBillStore.ts` directly - that used to go through `supabaseBillStore.ts` ->
+  `./supabaseClient`, which Jest resolves back to the mock itself, a circular import that silently
+  left the list `undefined`) - real RLS is only ever proven against local Postgres
+  (`supabase/tests/*.sql`).
 - `src/data/receiptReader.ts` is the one place a screen gets a receipt reader. It POSTs the image
   to the real `parse-receipt` Edge Function with the signed-in user's bearer token
   (`supabase.auth.getSession()`) and adapts its NDJSON `WireEvent` stream (handler.ts) into

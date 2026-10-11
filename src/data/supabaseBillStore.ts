@@ -12,24 +12,9 @@
  *    only learns about the scan's bill the moment `parse-receipt`'s `done`
  *    event names it (`receiptReader.ts`'s `billId`), and manual entry has no
  *    server row at all until something asks for one. `promoteBill` is the one
- *    place that gap closes: it either adopts the id the scan's `done` event
- *    already carries, or (manual entry) calls `create_manual_bill` to mint one,
- *    flushes whatever was built up locally (items, fees, tip, claims, ...) to
- *    the real row with `upsert` (so a retry after a partial failure is safe),
- *    then re-reads the bill back with `fetchSnapshot` rather than trusting its
- *    own writes succeeded, and only *then* rekeys the in-memory cache from the
- *    local id to the real one. If anything in that sequence fails - the RPC,
- *    any of the flush writes, or the final read-back - the draft is left
- *    exactly as it was, still under its local id, not promoted: nothing is
- *    silently marked synced when it isn't, and a caller can retry by calling
- *    `promoteBill` again (it remembers the server id a scan already has, so a
- *    retry never re-runs `create_manual_bill` and never risks a second phantom
- *    bill). Every item/fee/person/claim's own id is a `crypto.randomUUID()`
- *    minted up front rather than a throwaway local one, so promotion never
- *    needs to remap one a screen is already holding onto (a rendered
- *    `testID`, a selected chip, ...) - only the bill's own id and the payer's
- *    person id change (the draft's payer id is the raw auth user id; the real
- *    one is `bill_people.id`, which claims actually reference).
+ *    place that gap closes - see its own doc below for how it stays correct
+ *    under concurrency (a second caller racing the first, an edit landing
+ *    mid-flush).
  *
  * 2. **Manual entry has no Edge Function in its path.** `bills` has no INSERT
  *    policy for a normal signed-in user (`bills_update_payer`'s comment: it's
@@ -46,8 +31,9 @@
  * cache updates immediately, SPEC 8.3 NFR-1), with the network call
  * fire-and-forget via `writeThrough` - on failure the change is rolled back and
  * `onSyncError` (if given) is told about it, so a screen can show a short error
- * (SPEC 8.3). `isPromoted` lets a screen show a persistent "not synced" state
- * (rather than just a one-off toast) when promotion itself never completed.
+ * (SPEC 8.3). `writeThrough` tags each write with a per-field "channel" and
+ * generation counter so a slow, now-stale write's failure can never roll back
+ * a newer write that already landed for the same field (code review on #31).
  */
 import { supabase } from './supabaseClient';
 import { ALL_BILL_TABLES } from './billTables';
@@ -176,6 +162,30 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
    *  retry never calls `create_manual_bill` for a bill that already exists (which would mint a
    *  second, orphaned one - manual entry's RPC has no idempotency key). */
   const pendingServerIds = new Map<string, string>();
+  /** localId -> the in-flight `promoteBill` promise, so two concurrent callers (a UI retry button
+   *  tapped twice, a retry racing the original attempt) await the *same* attempt instead of each
+   *  starting their own - two attempts both reaching the "no pending server id yet" branch at once
+   *  would otherwise each call `create_manual_bill` and mint two real, separate, permanently
+   *  orphaned bills (code review on #31; the exact bug `manualEntryPending` in home.tsx guarded
+   *  against at one call site last round, but not at the shared root every caller goes through). */
+  const promotionsInFlight = new Map<string, Promise<StoredBill>>();
+  /** billId -> next never-reused `bill_items.position` to hand out (SPEC 8.1 has no secondary sort
+   *  key besides it): computed from array length at `addItem`/`mergeItems` time, a removed item's
+   *  position could be handed to a later addition, colliding with a survivor's unchanged position
+   *  and leaving their relative order to chance on the next read (code review on #31). */
+  const nextPosition = new Map<string, number>();
+  /** `${billId}:${field-channel}` -> a monotonic generation, bumped by every write-through call for
+   *  that exact field. A write's failure only reverts the local value if its generation is still
+   *  the latest for that channel - otherwise a newer write already landed and reverting now would
+   *  stomp it back to a stale value (code review on #31: this is systemic across every
+   *  write-through method, not a single-method bug). */
+  const writeGenerations = new Map<string, number>();
+  /** billId -> a counter bumped by every local mutation. `promoteBill`'s flush loop compares this
+   *  before and after its (multi-await) flush+confirm cycle; a mismatch means an edit landed on
+   *  the local id while promotion was in flight, so it loops and re-flushes with the now-current
+   *  state instead of discarding that edit the moment the cache gets rekeyed to the server id
+   *  (code review on #31, verified with a repro test). */
+  const localVersions = new Map<string, number>();
 
   function require(billId: string): StoredBill {
     const bill = cache.get(billId);
@@ -192,18 +202,28 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
     onSyncError?.(billId, message);
   }
 
+  /** Marks `billId` as having changed locally (called by every mutator below, right after `require`). */
+  function touch(billId: string) {
+    localVersions.set(billId, (localVersions.get(billId) ?? 0) + 1);
+  }
+
   /**
    * Runs one write for a bill whose local cache has already been updated optimistically; reverts
-   * that change and reports a short error on failure (SPEC 8.3). Shared by every simple
-   * write-through method below, so a future one can't forget to check `error` the way
-   * `promoteBill`'s own writes once did.
+   * that change and reports a short error on failure (SPEC 8.3), but only if no newer write to the
+   * same `channel` (e.g. `${billId}:item:${itemId}`) has landed since - see `writeGenerations`'s
+   * doc above. Shared by every simple write-through method below, so a future one can't forget to
+   * check `error`, or revert over a newer write, the way `promoteBill`'s own writes once did.
    */
-  function writeThrough(billId: string, op: PromiseLike<{ error: { message: string } | null }>, revert: () => void, message: string) {
+  function writeThrough(billId: string, channel: string, op: PromiseLike<{ error: { message: string } | null }>, revert: () => void, message: string) {
+    const key = `${billId}:${channel}`;
+    const generation = (writeGenerations.get(key) ?? 0) + 1;
+    writeGenerations.set(key, generation);
     void op.then(({ error }) => {
-      if (error) {
-        revert();
-        reportError(billId, message);
-      }
+      if (!error) return;
+      reportError(billId, message);
+      if (writeGenerations.get(key) === generation) revert();
+      // else: a newer write for this exact field already landed; leave it alone rather than
+      // stomping it back to this (older) write's pre-write value.
     });
   }
 
@@ -239,10 +259,10 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     getBill: (billId) => cache.get(billId),
     listBills: () => [...cache.values()].reverse().sort((a, b) => b.createdAt - a.createdAt),
-    isPromoted: (billId) => promotedIds.has(billId),
 
     beginScan(billId) {
       require(billId).scanState = 'streaming';
+      touch(billId);
     },
 
     // Streaming and finalizing stay purely local, even for a bill that will later be promoted:
@@ -253,6 +273,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
       const bill = require(billId);
       const newItems = expandLineToItems(line).map((unit): StoredItem => ({ id: newId(), ...unit }));
       bill.items = [...bill.items, ...newItems];
+      touch(billId);
       return newItems;
     },
 
@@ -270,22 +291,27 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
       bill.warnings = receipt.warnings;
       bill.printedSubtotalCents = receipt.printedSubtotalCents;
       bill.printedTotalCents = receipt.printedTotalCents;
+      touch(billId);
     },
 
     failScan(billId, code) {
       const bill = require(billId);
       bill.scanState = 'error';
       bill.scanError = code;
+      touch(billId);
     },
 
     addItem(billId, item) {
       const bill = require(billId);
+      touch(billId);
       const stored: StoredItem = { id: newId(), ...item };
       bill.items = [...bill.items, stored];
       if (promotedIds.has(billId)) {
-        const position = bill.items.length - 1;
+        const position = nextPosition.get(billId) ?? bill.items.length - 1;
+        nextPosition.set(billId, position + 1);
         writeThrough(
           billId,
+          `item:${stored.id}`,
           supabase.from('bill_items').insert({ id: stored.id, bill_id: billId, name: stored.name, price_cents: stored.priceCents, position }),
           () => {
             bill.items = bill.items.filter((i) => i.id !== stored.id);
@@ -298,6 +324,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     updateItem(billId, itemId, patch) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.items.find((i) => i.id === itemId);
       bill.items = bill.items.map((item) => (item.id === itemId ? { ...item, ...patch } : item));
       if (promotedIds.has(billId) && previous) {
@@ -306,6 +333,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
         if (patch.priceCents !== undefined) dbPatch.price_cents = patch.priceCents;
         writeThrough(
           billId,
+          `item:${itemId}`,
           supabase.from('bill_items').update(dbPatch).eq('id', itemId),
           () => {
             bill.items = bill.items.map((item) => (item.id === itemId ? previous : item));
@@ -317,6 +345,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     removeItem(billId, itemId) {
       const bill = require(billId);
+      touch(billId);
       const removedItem = bill.items.find((i) => i.id === itemId);
       const removedClaims = bill.claims.filter((c) => c.itemId === itemId);
       bill.items = bill.items.filter((item) => item.id !== itemId);
@@ -324,6 +353,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
       if (promotedIds.has(billId) && removedItem) {
         writeThrough(
           billId,
+          `item:${itemId}`,
           supabase.from('bill_items').delete().eq('id', itemId),
           () => {
             bill.items = [...bill.items, removedItem];
@@ -338,6 +368,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
       const bill = require(billId);
       const toMerge = bill.items.filter((item) => itemIds.includes(item.id));
       if (toMerge.length < 2) return;
+      touch(billId);
       const merged: StoredItem = {
         id: newId(),
         name: toMerge[0].name,
@@ -348,13 +379,23 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
       bill.items = [...bill.items.filter((item) => !itemIds.includes(item.id)), merged];
       bill.claims = bill.claims.filter((claim) => !itemIds.includes(claim.itemId));
       if (promotedIds.has(billId)) {
-        const position = bill.items.length - 1;
+        const position = nextPosition.get(billId) ?? bill.items.length - 1;
+        nextPosition.set(billId, position + 1);
+        // Tags every merged id's channel so a concurrent edit to one of them (landing between
+        // this merge starting and finishing) is never silently reverted by this merge's own
+        // failure path the way a plain revert-to-captured-value would.
+        const channel = `merge:${[...itemIds].sort().join(',')}`;
+        const key = `${billId}:${channel}`;
+        const generation = (writeGenerations.get(key) ?? 0) + 1;
+        writeGenerations.set(key, generation);
         void (async () => {
           const { error: insertError } = await supabase.from('bill_items').insert({ id: merged.id, bill_id: billId, name: merged.name, price_cents: merged.priceCents, position });
           if (insertError) {
-            bill.items = previousItems;
-            bill.claims = previousClaims;
             reportError(billId, "Couldn't merge those items. Try again.");
+            if (writeGenerations.get(key) === generation) {
+              bill.items = previousItems;
+              bill.claims = previousClaims;
+            }
             return;
           }
           const { error: deleteError } = await supabase.from('bill_items').delete().in('id', itemIds);
@@ -372,11 +413,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     setDiscount(billId, cents) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.discountCents;
       bill.discountCents = cents;
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          'discount',
           supabase.from('bills').update({ discount_cents: cents }).eq('id', billId),
           () => {
             bill.discountCents = previous;
@@ -388,11 +431,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     setTax(billId, cents) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.taxCents;
       bill.taxCents = cents;
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          'tax',
           supabase.from('bills').update({ tax_cents: cents }).eq('id', billId),
           () => {
             bill.taxCents = previous;
@@ -404,11 +449,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     addFee(billId, fee) {
       const bill = require(billId);
+      touch(billId);
       const stored: Fee = { id: newId(), ...fee };
       bill.fees = [...bill.fees, stored];
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          `fee:${stored.id}`,
           supabase.from('bill_fees').insert({ id: stored.id, bill_id: billId, label: stored.label, cents: stored.cents, split: stored.split }),
           () => {
             bill.fees = bill.fees.filter((f) => f.id !== stored.id);
@@ -421,11 +468,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     updateFee(billId, feeId, patch) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.fees.find((f) => f.id === feeId);
       bill.fees = bill.fees.map((fee) => (fee.id === feeId ? { ...fee, ...patch } : fee));
       if (promotedIds.has(billId) && previous) {
         writeThrough(
           billId,
+          `fee:${feeId}`,
           supabase.from('bill_fees').update(patch).eq('id', feeId),
           () => {
             bill.fees = bill.fees.map((fee) => (fee.id === feeId ? previous : fee));
@@ -437,11 +486,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     removeFee(billId, feeId) {
       const bill = require(billId);
+      touch(billId);
       const removed = bill.fees.find((f) => f.id === feeId);
       bill.fees = bill.fees.filter((fee) => fee.id !== feeId);
       if (promotedIds.has(billId) && removed) {
         writeThrough(
           billId,
+          `fee:${feeId}`,
           supabase.from('bill_fees').delete().eq('id', feeId),
           () => {
             bill.fees = [...bill.fees, removed];
@@ -453,12 +504,14 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     setTip(billId, tip, source) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.tip;
       bill.tip = tip;
       bill.tipSource = source;
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          'tip',
           supabase.from('bills').update({ tip: tipToJson(tip) }).eq('id', billId),
           () => {
             bill.tip = previous;
@@ -470,6 +523,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     addPerson(billId, name) {
       const bill = require(billId);
+      touch(billId);
       const existingNames = new Set(bill.people.map((p) => p.name));
       let label = name;
       let suffix = 2;
@@ -482,6 +536,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          `person:${person.id}`,
           supabase.from('bill_people').insert({ id: person.id, bill_id: billId, display_name: label, kind: 'named' }),
           () => {
             bill.people = bill.people.filter((p) => p.id !== person.id);
@@ -494,12 +549,14 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     setClaim(billId, itemId, personId, mode, createdBy) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.claims;
       const without = bill.claims.filter((claim) => !(claim.itemId === itemId && claim.personId === personId));
       bill.claims = [...without, { itemId, personId, mode, createdBy }];
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          `claim:${itemId}:${personId}`,
           supabase.from('claims').upsert({ item_id: itemId, person_id: personId, bill_id: billId, mode, created_by: createdBy }),
           () => {
             bill.claims = previous;
@@ -511,11 +568,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     clearClaim(billId, itemId, personId) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.claims;
       bill.claims = bill.claims.filter((claim) => !(claim.itemId === itemId && claim.personId === personId));
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          `claim:${itemId}:${personId}`,
           supabase.from('claims').delete().eq('item_id', itemId).eq('person_id', personId),
           () => {
             bill.claims = previous;
@@ -527,11 +586,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     openBill(billId) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.status;
       bill.status = 'open';
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          'status',
           supabase.from('bills').update({ status: 'open' }).eq('id', billId),
           () => {
             bill.status = previous;
@@ -543,11 +604,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     markSent(billId) {
       const bill = require(billId);
+      touch(billId);
       const previous = bill.sentAt;
       bill.sentAt = Date.now();
       if (promotedIds.has(billId)) {
         writeThrough(
           billId,
+          'sentAt',
           supabase.from('bills').update({ sent_at: new Date(bill.sentAt).toISOString() }).eq('id', billId),
           () => {
             bill.sentAt = previous;
@@ -557,52 +620,70 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
       }
     },
 
+    /**
+     * Resolves the real server id (minting one via `create_manual_bill` or adopting `serverId`)
+     * and flushes the local draft to it. Two concurrency problems this has to get right, both
+     * found by code review and verified with repro tests:
+     *
+     * - **A second concurrent call must not mint a second bill.** `promotionsInFlight` dedups by
+     *   `localId`: every caller while one attempt is already running gets that same promise back,
+     *   not a fresh attempt. This is the actual fix for "double-tap Retry/Enter manually mints two
+     *   phantom bills" - a UI-level debounce flag at one call site (last round's fix) only
+     *   protects that one call site; this protects every current and future one.
+     * - **An edit landing on the local id while the flush is in flight must not be lost.** The
+     *   flush below is multiple real network round trips (resolve the payer's real id, write,
+     *   read back to confirm); a user can rename an item or add a fee in that window on a normal
+     *   network, not just a rare edge case. Rather than snapshot-then-discard, this loops: it
+     *   reads `draft.items`/`draft.fees`/etc *fresh* each pass (safe because `draft` is the same
+     *   object `cache` holds - every mutator above writes directly onto it, so `draft.items` always
+     *   reflects the latest state), and `localVersions` tells it whether anything changed between
+     *   the read and the confirm. If so, it flushes again with whatever is current now, instead of
+     *   finalizing and rekeying over a local edit that never made it to the server. Every write
+     *   uses `upsert`, so re-running the same flush is always safe.
+     */
     async promoteBill(localId, payer, serverId) {
-      const draft = require(localId);
+      const inFlight = promotionsInFlight.get(localId);
+      if (inFlight) return inFlight;
 
-      // A retry reuses the server id a previous attempt already has (scan: parse-receipt created
-      // it regardless of whether the flush below succeeded; manual entry: the RPC call below
-      // created it) - never re-run `create_manual_bill` for a bill that might already exist.
-      let billId: string | null = serverId ?? pendingServerIds.get(localId) ?? null;
-      if (!billId) {
-        const { data, error } = await supabase.rpc('create_manual_bill');
-        if (error || !data) {
-          reportError(localId, "Couldn't create the bill. Check your connection and try again.");
+      const attempt = (async (): Promise<StoredBill> => {
+        const draft = require(localId);
+
+        // A retry reuses the server id a previous attempt already has (scan: parse-receipt
+        // created it regardless of whether the flush below succeeded; manual entry: the RPC call
+        // below created it) - never re-run `create_manual_bill` for a bill that might already
+        // exist.
+        let billId: string | null = serverId ?? pendingServerIds.get(localId) ?? null;
+        if (!billId) {
+          const { data, error } = await supabase.rpc('create_manual_bill');
+          if (error || !data) {
+            reportError(localId, "Couldn't create the bill. Check your connection and try again.");
+            return draft;
+          }
+          billId = (data as { id: string }).id;
+        }
+        pendingServerIds.set(localId, billId);
+
+        // Resolve the real payer `bill_people` id once (it never changes across retries below): a
+        // claim made before promotion has `personId`/`createdBy` set to the draft's payer id,
+        // which is the raw auth user id (`createDraftBill`'s own shape), not the `bill_people.id`
+        // claims actually reference server-side.
+        const { data: peopleBeforeFlush, error: peopleError } = await supabase.from('bill_people').select('id,user_id,display_name,kind').eq('bill_id', billId);
+        const realPayerId = (peopleBeforeFlush ?? []).find((p) => p.kind === 'payer')?.id;
+        if (peopleError || !realPayerId) {
+          reportError(localId, "Couldn't finish saving this bill. Try again.");
           return draft;
         }
-        billId = (data as { id: string }).id;
-      }
-      pendingServerIds.set(localId, billId);
+        const remapPerson = (id: string) => (id === draft.payerId ? realPayerId : id);
 
-      // Resolve the real payer `bill_people` id *before* building anything that references a
-      // person: a claim made before promotion has `personId`/`createdBy` set to the draft's
-      // payer id, which is the raw auth user id (`createDraftBill`'s own shape), not the
-      // `bill_people.id` claims actually reference server-side. Without this remap, a claim made
-      // during review/manual entry would silently point at the wrong id the moment it's flushed
-      // (code review on PR #31).
-      const { data: peopleBeforeFlush, error: peopleError } = await supabase.from('bill_people').select('id,user_id,display_name,kind').eq('bill_id', billId);
-      const realPayerId = (peopleBeforeFlush ?? []).find((p) => p.kind === 'payer')?.id;
-      if (peopleError || !realPayerId) {
-        reportError(localId, "Couldn't finish saving this bill. Try again.");
-        return draft;
-      }
-      const remapPerson = (id: string) => (id === draft.payerId ? realPayerId : id);
+        const MAX_ATTEMPTS = 8; // a safety valve against a pathological, never-settling edit storm
+        for (let pass = 1; pass <= MAX_ATTEMPTS; pass += 1) {
+          const versionAtStart = localVersions.get(localId) ?? 0;
 
-      const hasContent =
-        draft.title !== 'New bill' ||
-        draft.merchantName !== null ||
-        draft.currency !== 'USD' ||
-        draft.discountCents !== 0 ||
-        draft.taxCents !== 0 ||
-        draft.tip.kind === 'percent' ||
-        draft.tip.cents !== 0;
-
-      // Every write below uses `upsert`, not `insert`: a retry after a partial failure must be
-      // able to re-run the same writes without a duplicate-key conflict on whatever did land last
-      // time (every row already carries a stable client-generated id).
-      const results: QueryResult[] = await Promise.all([
-        hasContent
-          ? supabase
+          // Every write below uses `upsert`, not `insert`: a retry (or a re-flush pass below)
+          // must be able to re-run the same writes without a duplicate-key conflict on whatever
+          // already landed (every row already carries a stable client-generated id).
+          const results: QueryResult[] = await Promise.all([
+            supabase
               .from('bills')
               .update({
                 title: draft.title,
@@ -612,41 +693,118 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
                 tax_cents: draft.taxCents,
                 tip: tipToJson(draft.tip),
               })
-              .eq('id', billId)
-          : Promise.resolve({ data: null, error: null }),
-        draft.items.length > 0
-          ? supabase.from('bill_items').upsert(draft.items.map((item, position) => ({ id: item.id, bill_id: billId, name: item.name, price_cents: item.priceCents, position })))
-          : Promise.resolve({ data: null, error: null }),
-        draft.fees.length > 0
-          ? supabase.from('bill_fees').upsert(draft.fees.map((fee) => ({ id: fee.id, bill_id: billId, label: fee.label, cents: fee.cents, split: fee.split })))
-          : Promise.resolve({ data: null, error: null }),
-        draft.claims.length > 0
-          ? supabase.from('claims').upsert(draft.claims.map((c) => ({ item_id: c.itemId, person_id: remapPerson(c.personId), bill_id: billId, mode: c.mode, created_by: remapPerson(c.createdBy) })))
-          : Promise.resolve({ data: null, error: null }),
-      ]);
-      const writeFailed = results.some((r) => r.error);
+              .eq('id', billId),
+            draft.items.length > 0
+              ? supabase.from('bill_items').upsert(draft.items.map((item, position) => ({ id: item.id, bill_id: billId, name: item.name, price_cents: item.priceCents, position })))
+              : Promise.resolve({ data: null, error: null }),
+            draft.fees.length > 0
+              ? supabase.from('bill_fees').upsert(draft.fees.map((fee) => ({ id: fee.id, bill_id: billId, label: fee.label, cents: fee.cents, split: fee.split })))
+              : Promise.resolve({ data: null, error: null }),
+            // The payer's own row already exists (handle_new_bill's trigger); only named people
+            // (member/guest never originate locally) need flushing here.
+            draft.people.some((p) => p.kind === 'named')
+              ? supabase.from('bill_people').upsert(draft.people.filter((p) => p.kind === 'named').map((p) => ({ id: p.id, bill_id: billId, display_name: p.name, kind: 'named' })))
+              : Promise.resolve({ data: null, error: null }),
+            draft.claims.length > 0
+              ? supabase.from('claims').upsert(draft.claims.map((c) => ({ item_id: c.itemId, person_id: remapPerson(c.personId), bill_id: billId, mode: c.mode, created_by: remapPerson(c.createdBy) })))
+              : Promise.resolve({ data: null, error: null }),
+          ]);
+          const writeFailed = results.some((r) => r.error);
 
-      // Read the bill back rather than trusting the writes above succeeded (or hand-assembling
-      // the promoted bill from `draft`, which is what let a failed `bill_people` read silently
-      // fall back to the raw auth user id as `payerId` before): `fetchSnapshot` itself refuses to
-      // return anything unless every one of its reads succeeded.
-      const snapshot = await fetchSnapshot(billId, draft);
-      if (writeFailed || !snapshot) {
+          // Read the bill back rather than trusting the writes above succeeded (or
+          // hand-assembling the promoted bill from `draft`, which is what let a failed
+          // `bill_people` read silently fall back to the raw auth user id as `payerId` before):
+          // `fetchSnapshot` itself refuses to return anything unless every one of its reads
+          // succeeded.
+          const snapshot = await fetchSnapshot(billId, draft);
+          if (writeFailed || !snapshot) {
+            reportError(localId, "Couldn't finish saving this bill. Try again.");
+            return draft;
+          }
+
+          if ((localVersions.get(localId) ?? 0) !== versionAtStart) {
+            // Something changed locally while this pass's writes/read-back were in flight - loop
+            // and flush again with whatever `draft` holds now, rather than finalizing over it.
+            continue;
+          }
+
+          nextPosition.set(billId, snapshot.items.length);
+          pendingServerIds.delete(localId);
+          localVersions.delete(localId);
+          cache.delete(localId);
+          set(snapshot);
+          promotedIds.add(billId);
+          return snapshot;
+        }
+
+        // Never actually settled after MAX_ATTEMPTS passes (a pathological, continuous edit
+        // storm): the last pass's writes did land, so finalize with it rather than leaving the
+        // bill local-only forever over an edge case this unlikely.
+        const finalSnapshot = await fetchSnapshot(billId, draft);
+        if (finalSnapshot) {
+          nextPosition.set(billId, finalSnapshot.items.length);
+          pendingServerIds.delete(localId);
+          localVersions.delete(localId);
+          cache.delete(localId);
+          set(finalSnapshot);
+          promotedIds.add(billId);
+          return finalSnapshot;
+        }
         reportError(localId, "Couldn't finish saving this bill. Try again.");
         return draft;
-      }
+      })();
 
-      pendingServerIds.delete(localId);
-      cache.delete(localId);
-      set(snapshot);
-      promotedIds.add(billId);
-      return snapshot;
+      promotionsInFlight.set(localId, attempt);
+      try {
+        return await attempt;
+      } finally {
+        promotionsInFlight.delete(localId);
+      }
     },
   };
 }
 
 // `bills` itself is keyed by `id`, not `bill_id`, so it gets its own filter below.
 const CHANGE_TABLES = ALL_BILL_TABLES.filter((table) => table !== 'bills');
+/** Coalesces realtime events that fire within this window into a single refetch (SPEC 8.3): a
+ *  `promoteBill` flush alone can write up to five tables in parallel, so without this, one
+ *  promotion's own echo can trigger up to five redundant full-snapshot refetches. */
+const REFETCH_DEBOUNCE_MS = 150;
+
+/**
+ * Debounces calls to `schedule()` into a single `fetchFn()` call `debounceMs` after the last one,
+ * and - since the mock realtime channel in tests never actually fires, this is exported so the
+ * ordering guarantee below has direct unit coverage instead of only living inside
+ * `subscribeToBillChanges` - applies only the result of the most *recently scheduled* call, even
+ * if an earlier call's `fetchFn()` happens to resolve later (plausible under real network jitter:
+ * two realtime events fire close together, and the older request's response arrives second). A
+ * naive "last response wins" would let that stale response overwrite newer data (code review on
+ * #31).
+ */
+export function createDebouncedLatestFetcher<T>(fetchFn: () => Promise<T>, onResult: (result: T) => void, debounceMs: number): { schedule: () => void; cancel: () => void } {
+  let latestRequestId = 0;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const runFetch = async () => {
+    const requestId = ++latestRequestId;
+    const result = await fetchFn();
+    if (requestId !== latestRequestId) return; // a newer call has since superseded this one
+    onResult(result);
+  };
+
+  return {
+    schedule: () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void runFetch();
+      }, debounceMs);
+    },
+    cancel: () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+    },
+  };
+}
 
 /**
  * Subscribes to Postgres changes for one bill, across every table a member or the payer can
@@ -665,27 +823,25 @@ const CHANGE_TABLES = ALL_BILL_TABLES.filter((table) => table !== 'bills');
  * back to whatever the store holds *now*, not whatever it held when this screen first mounted.
  */
 export function subscribeToBillChanges(billId: string, onSnapshot: (bill: StoredBill | null) => void, getPrevious: () => StoredBill | undefined): () => void {
-  const refetch = async () => {
-    const snapshot = await fetchSnapshot(billId, getPrevious());
-    onSnapshot(snapshot);
-  };
+  const { schedule, cancel } = createDebouncedLatestFetcher(() => fetchSnapshot(billId, getPrevious()), onSnapshot, REFETCH_DEBOUNCE_MS);
 
   let channel = supabase.channel(`bill:${billId}`);
   for (const table of CHANGE_TABLES) {
     channel = channel.on(
       'postgres_changes' as never,
       { event: '*', schema: 'public', table, filter: `bill_id=eq.${billId}` } as never,
-      () => void refetch(),
+      () => schedule(),
       // Casts above: @supabase/supabase-js's `.on` overloads are generic over the event/table
       // literal; this module subscribes to the same filter shape across several tables in a loop
       // rather than one near-identical call per table, which the overloads aren't shaped for.
     );
   }
   // `bills` itself is keyed by `id`, not `bill_id` - give it its own filter.
-  channel = channel.on('postgres_changes' as never, { event: '*', schema: 'public', table: 'bills', filter: `id=eq.${billId}` } as never, () => void refetch());
+  channel = channel.on('postgres_changes' as never, { event: '*', schema: 'public', table: 'bills', filter: `id=eq.${billId}` } as never, () => schedule());
   channel.subscribe();
 
   return () => {
+    cancel();
     void supabase.removeChannel(channel);
   };
 }
