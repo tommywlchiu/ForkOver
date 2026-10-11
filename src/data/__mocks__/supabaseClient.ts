@@ -32,6 +32,7 @@ type FakeSession = {
 
 let currentSession: FakeSession | null = null;
 let userCounter = 0;
+let forcedRpcError: { message: string } | null = null;
 const profiles = new Map<string, Profile>();
 const listeners = new Set<(event: AuthChangeEvent, session: FakeSession | null) => void>();
 
@@ -147,6 +148,7 @@ function notify(event: AuthChangeEvent, session: FakeSession | null) {
 export function __resetFakeSupabase() {
   currentSession = null;
   userCounter = 0;
+  forcedRpcError = null;
   profiles.clear();
   __resetFakeBillTables();
 }
@@ -163,6 +165,22 @@ function fakeChannel() {
     subscribe: () => channel,
   };
   return channel;
+}
+
+/** Test-only helper: seeds a profile row directly, for RPCs that search across users. */
+export function __seedProfile(id: string, profile: Partial<Profile>) {
+  profiles.set(id, {
+    username: null,
+    display_name: null,
+    venmo_username: null,
+    ai_consent_at: null,
+    ...profile,
+  });
+}
+
+/** Test-only helper: makes the next `rpc` call resolve with an error, to exercise error states. */
+export function __forceNextRpcError(message = 'mock rpc failure') {
+  forcedRpcError = { message };
 }
 
 export const supabase = {
@@ -223,35 +241,60 @@ export const supabase = {
       }),
     };
   },
-  // `create_manual_bill` (supabase/migrations/20261010100000_create_manual_bill.sql): mints a
-  // draft bill for the signed-in caller and, same as `handle_new_bill`'s trigger, gives them their
-  // own `bill_people` payer row immediately.
-  rpc: async (fn: string) => {
-    if (fn !== 'create_manual_bill') throw new Error(`supabaseClient mock: unhandled rpc "${fn}"`);
-    if (!currentSession) return { data: null, error: { message: 'create_manual_bill requires a signed-in session' } };
-    const bill: Row = {
-      id: crypto.randomUUID(),
-      payer_user_id: currentSession.user.id,
-      status: 'draft',
-      title: null,
-      merchant_name: null,
-      currency: 'USD',
-      discount_cents: 0,
-      tax_cents: 0,
-      tip: null,
-      sent_at: null,
-      created_at: new Date().toISOString(),
-    };
-    billTables.bills.set(bill.id as string, bill);
-    const payerPerson: Row = {
-      id: crypto.randomUUID(),
-      bill_id: bill.id,
-      user_id: currentSession.user.id,
-      display_name: currentSession.user.user_metadata.full_name,
-      kind: 'payer',
-    };
-    billTables.bill_people.set(payerPerson.id as string, payerPerson);
-    return { data: bill, error: null };
+  // Dispatches by function name. `create_manual_bill`
+  // (supabase/migrations/20261010100000_create_manual_bill.sql): mints a draft bill for the
+  // signed-in caller and, same as `handle_new_bill`'s trigger, gives them their own `bill_people`
+  // payer row immediately. `search_usernames` (SPEC 8.2) mirrors the real RPC: requires a
+  // session, >= 2 chars, matches by prefix, at most 10 rows, ordered by username.
+  rpc: async (fn: string, args: Record<string, unknown> = {}) => {
+    if (forcedRpcError) {
+      const error = forcedRpcError;
+      forcedRpcError = null;
+      return { data: null, error };
+    }
+
+    if (fn === 'create_manual_bill') {
+      if (!currentSession) return { data: null, error: { message: 'create_manual_bill requires a signed-in session' } };
+      const bill: Row = {
+        id: crypto.randomUUID(),
+        payer_user_id: currentSession.user.id,
+        status: 'draft',
+        title: null,
+        merchant_name: null,
+        currency: 'USD',
+        discount_cents: 0,
+        tax_cents: 0,
+        tip: null,
+        sent_at: null,
+        created_at: new Date().toISOString(),
+      };
+      billTables.bills.set(bill.id as string, bill);
+      const payerPerson: Row = {
+        id: crypto.randomUUID(),
+        bill_id: bill.id,
+        user_id: currentSession.user.id,
+        display_name: currentSession.user.user_metadata.full_name,
+        kind: 'payer',
+      };
+      billTables.bill_people.set(payerPerson.id as string, payerPerson);
+      return { data: bill, error: null };
+    }
+
+    if (fn === 'search_usernames') {
+      if (!currentSession) {
+        return { data: null, error: { message: 'search_usernames requires a session (signed in or anonymous)' } };
+      }
+      const prefix = String(args.p_prefix ?? '').trim().toLowerCase();
+      if (prefix.length < 2) return { data: [], error: null };
+      const rows = Array.from(profiles.entries())
+        .filter(([, profile]) => !!profile.username && profile.username.toLowerCase().startsWith(prefix))
+        .sort((a, b) => a[1].username!.localeCompare(b[1].username!))
+        .slice(0, 10)
+        .map(([id, profile]) => ({ id, username: profile.username, display_name: profile.display_name }));
+      return { data: rows, error: null };
+    }
+
+    throw new Error(`supabaseClient mock: unhandled rpc "${fn}"`);
   },
   channel: (_name: string) => fakeChannel(),
   removeChannel: async () => undefined,
