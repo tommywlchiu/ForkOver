@@ -106,9 +106,14 @@ function assemble(
     merchantName: bill.merchant_name,
     currency: bill.currency,
     payerId: payer?.id ?? previous?.payerId ?? '',
-    people: people
-      .filter((p) => p.kind === 'payer' || p.kind === 'named')
-      .map((p): StoredPerson => ({ id: p.id, name: p.display_name, kind: p.kind === 'payer' ? 'payer' : 'named' })),
+    // Includes member/guest rows too (not just payer/named): once the join-bill flow exists
+    // (out of scope here), the payer's bill screen should see their claims live without another
+    // change to this module.
+    people: people.map((p): StoredPerson => ({
+      id: p.id,
+      name: p.display_name,
+      kind: p.kind === 'payer' || p.kind === 'named' || p.kind === 'member' || p.kind === 'guest' ? p.kind : 'named',
+    })),
     items: [...items].sort((a, b) => a.position - b.position).map((i): StoredItem => ({ id: i.id, name: i.name, priceCents: i.price_cents })),
     discountCents: bill.discount_cents,
     taxCents: bill.tax_cents,

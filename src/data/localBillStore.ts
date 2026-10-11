@@ -10,7 +10,12 @@ import type { Claim, ClaimMode } from '../lib/claims/resolve';
 import type { ParsedLineItem, ParsedReceipt, TipSource } from '../lib/receipt/schema';
 
 export type BillStatus = 'draft' | 'open' | 'closed';
-export type PersonKind = 'payer' | 'named';
+// 'member' and 'guest' only ever appear once something writes a bill_people row of that kind -
+// the join-bill flow (SPEC 8.2), out of scope for this task - but a promoted bill's realtime
+// refetch (supabaseBillStore.ts `assemble`) already reads them back so the payer's bill screen
+// shows a member/guest's claims live the moment that flow exists, rather than needing another
+// change here later.
+export type PersonKind = 'payer' | 'named' | 'member' | 'guest';
 export type ScanState = 'idle' | 'streaming' | 'done' | 'error';
 
 export type StoredPerson = { id: string; name: string; kind: PersonKind };
