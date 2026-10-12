@@ -1,10 +1,13 @@
 /**
  * Share screen's "Send in app" flow, driven through the real screens (SPEC.md 8.2, M4
  * in-app-sending task): searching by username and selecting a result calls `invite_bill_member`
- * and shows a confirmation. The mock Supabase client's realtime channel never fires in tests (see
- * its own module doc) - full realtime pickup is confirmed separately against a real local
- * Supabase stack - so this only exercises the RPC call and the resulting server-side row, not the
- * screen re-rendering the people list from a realtime event.
+ * and shows a confirmation, keyed per invited user; the section is payer-only and gated on the
+ * bill being synced, not just online; an already-member invite is reported honestly, not as a
+ * fresh "Invited"; and the caller never shows up in their own search results. The mock Supabase
+ * client's realtime channel never fires in tests (see its own module doc) - full realtime pickup
+ * is confirmed separately against a real local Supabase stack - so this only exercises the RPC
+ * call and the resulting server-side row, not the screen re-rendering the people list from a
+ * realtime event.
  */
 import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library';
 import { supabase } from '../data/supabaseClient';
@@ -62,7 +65,7 @@ describe('send in app', () => {
     await typeInto('username-search-input', 'bai');
     await press('username-search-result-friend-1');
 
-    await waitFor(() => expect(screen.getByTestId('invite-confirmation')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('invite-status-friend-1')).toBeTruthy());
     expect(screen.getByText('Invited @baileyb')).toBeTruthy();
 
     // The screen itself doesn't add Bailey to its own people list - that happens through the
@@ -98,7 +101,81 @@ describe('send in app', () => {
     await typeInto('username-search-input', 'cas');
     await press('username-search-result-friend-2');
 
-    await waitFor(() => expect(screen.getByTestId('invite-error')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('invite-status-friend-2')).toBeTruthy());
+    // Surfaces the real reason, not a generic message (code review).
+    expect(screen.getByText(/Could not invite @casey: .*is closed/)).toBeTruthy();
     expect(onlyBill().people.some((p) => p.name === 'Casey')).toBe(false);
+  }, 15000);
+
+  it('reports an already-invited user honestly instead of a false "Invited"', async () => {
+    __seedProfile('friend-3', { username: 'dana', display_name: 'Dana' });
+
+    renderRouter('./src/app', { initialUrl: '/' });
+    await signIn();
+    await press('enter-manually-button');
+    await press('looks-right-button');
+
+    await typeInto('username-search-input', 'dan');
+    await press('username-search-result-friend-3');
+    await waitFor(() => expect(screen.getByText('Invited @dana')).toBeTruthy());
+
+    // Invite the same person again (e.g. a second search) - nothing new happened server-side,
+    // so the UI should say so rather than repeating the "Invited" message (code review).
+    await typeInto('username-search-input', '');
+    await typeInto('username-search-input', 'dan');
+    await press('username-search-result-friend-3');
+
+    await waitFor(() => expect(screen.getByText('@dana is already on this bill')).toBeTruthy());
+  }, 15000);
+
+  it('hides the invite section entirely for a viewer who is not this bill\'s payer', async () => {
+    renderRouter('./src/app', { initialUrl: '/' });
+    await signIn();
+    await press('enter-manually-button');
+    await press('looks-right-button');
+
+    await screen.findByTestId('send-in-app-section');
+
+    // Simulate a different signed-in user viewing the same (locally cached) bill - there's no
+    // real flow for this yet (the native app is payer-only), but nothing should assume it's
+    // impossible either (code review).
+    useSessionStore.setState({ userId: 'someone-else' });
+
+    await waitFor(() => expect(screen.queryByTestId('send-in-app-section')).toBeNull());
+  }, 15000);
+
+  it('blocks inviting on a bill that never finished syncing, even while online', async () => {
+    renderRouter('./src/app', { initialUrl: '/' });
+    await signIn();
+    await press('enter-manually-button');
+    await press('looks-right-button');
+
+    const billId = onlyBill().id;
+    await screen.findByTestId('username-search-input');
+
+    // Mark the bill as not-synced directly (SPEC 8.3's persistent "not synced" state) without
+    // actually going offline - `controlsDisabled` alone would miss this (code review).
+    useBillStore.setState((state) => ({ unsyncedBillIds: { ...state.unsyncedBillIds, [billId]: true } }));
+
+    await waitFor(() => expect(screen.queryByTestId('username-search-input')).toBeNull());
+    expect(screen.getByText("Still syncing this bill - try again once it's synced.")).toBeTruthy();
+  }, 15000);
+
+  it('excludes the signed-in caller from their own search results', async () => {
+    // The signed-in payer picks the username "alex" (via `signIn()` below); seed a second,
+    // unrelated profile with a username sharing the same prefix so the search itself has a real
+    // match to return, distinct from the caller's own.
+    __seedProfile('someone-else-id', { username: 'alexb', display_name: 'Alex B' });
+
+    renderRouter('./src/app', { initialUrl: '/' });
+    await signIn();
+    await press('enter-manually-button');
+    await press('looks-right-button');
+
+    await typeInto('username-search-input', 'ale');
+
+    await waitFor(() => expect(screen.getByTestId('username-search-result-someone-else-id')).toBeTruthy());
+    const selfId = useSessionStore.getState().userId!;
+    expect(screen.queryByTestId(`username-search-result-${selfId}`)).toBeNull();
   }, 15000);
 });
