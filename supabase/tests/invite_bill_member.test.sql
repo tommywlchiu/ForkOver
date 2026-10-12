@@ -1,24 +1,40 @@
 -- pgTAP coverage for `invite_bill_member` (SPEC.md 8.2/8.5, M4 in-app-sending task): the payer can
 -- invite a specific, known user as a real `kind = 'member'` bill_people row; a non-payer can't;
--- inviting twice is idempotent (returns the existing row rather than erroring, same as
--- `join_bill`); and it's blocked on a closed bill, same as every other payer-only write.
+-- inviting twice (or inviting someone who already joined themselves) is idempotent and honestly
+-- reports `already_member`, rather than lying about creating a fresh row; and it's blocked on a
+-- closed bill, same as every other payer-only write.
 begin;
-select plan(10);
+select plan(12);
 
 insert into auth.users (id, email) values
   ('e1000000-0000-0000-0000-000000000001', 'payer@invite.example'),
   ('e1000000-0000-0000-0000-000000000002', 'other-payer@invite.example'),
   ('e1000000-0000-0000-0000-000000000003', 'friend@invite.example'),
-  ('e1000000-0000-0000-0000-000000000004', 'outsider@invite.example');
+  ('e1000000-0000-0000-0000-000000000004', 'outsider@invite.example'),
+  ('e1000000-0000-0000-0000-000000000005', 'already-guest@invite.example');
 
 update public.profiles set username = 'friend_a', display_name = 'Friend A'
 where id = 'e1000000-0000-0000-0000-000000000003';
+
+update public.profiles set username = 'guest_g', display_name = 'Guest G'
+where id = 'e1000000-0000-0000-0000-000000000005';
 
 insert into public.bills (id, payer_user_id, status, share_token) values
   ('e2000000-0000-0000-0000-000000000001', 'e1000000-0000-0000-0000-000000000001', 'open', 'invite-open-token'),
   ('e2000000-0000-0000-0000-000000000002', 'e1000000-0000-0000-0000-000000000001', 'closed', 'invite-closed-token');
 
 set role authenticated;
+
+-- A user who already joined themselves as a guest via the share link, before the payer ever
+-- tries to invite them by username.
+set request.jwt.claims = '{"sub": "e1000000-0000-0000-0000-000000000005", "is_anonymous": true}';
+
+select lives_ok(
+  $$ select public.join_bill('invite-open-token', 'Guest G') $$,
+  'the eventual invitee joins first as a guest, via the share link'
+);
+
+reset request.jwt.claims;
 set request.jwt.claim.sub = 'e1000000-0000-0000-0000-000000000001';
 
 select results_eq(
@@ -40,16 +56,16 @@ select results_eq(
 );
 
 -- Calling it again for the same user does not create a duplicate row (idempotent, like
--- join_bill), it just returns the existing one.
+-- join_bill), and honestly reports it via `already_member` rather than claiming a fresh invite.
 select results_eq(
-  $$ select id from public.invite_bill_member(
+  $$ select id, already_member from public.invite_bill_member(
        'e2000000-0000-0000-0000-000000000001',
        'e1000000-0000-0000-0000-000000000003'
      ) $$,
-  $$ select id from public.bill_people
+  $$ select id, true from public.bill_people
      where bill_id = 'e2000000-0000-0000-0000-000000000001'
        and user_id = 'e1000000-0000-0000-0000-000000000003' $$,
-  'inviting the same person twice returns the existing row'
+  'inviting the same person twice returns the existing row, flagged already_member'
 );
 
 select results_eq(
@@ -58,6 +74,18 @@ select results_eq(
        and user_id = 'e1000000-0000-0000-0000-000000000003' $$,
   $$ values (1) $$,
   'calling it twice still leaves exactly one row behind'
+);
+
+-- Inviting someone who already joined themselves as a guest is also reported as
+-- `already_member`, and their kind is left exactly as it was (no silent 'guest' -> 'member'
+-- upgrade) - a full identity merge is out of scope here (see the migration's own comment).
+select results_eq(
+  $$ select kind, already_member from public.invite_bill_member(
+       'e2000000-0000-0000-0000-000000000001',
+       'e1000000-0000-0000-0000-000000000005'
+     ) $$,
+  $$ values ('guest'::text, true) $$,
+  'inviting an already-joined guest reports already_member and leaves their kind unchanged'
 );
 
 -- A non-payer (even one who owns a different bill) cannot invite anyone to this bill.

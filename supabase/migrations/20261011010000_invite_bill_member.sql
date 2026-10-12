@@ -12,41 +12,51 @@
 -- a payer insert a `kind = 'member'` row with someone else's `user_id` - only 'named' rows are
 -- payer-insertable at all), but the function re-validates `auth.uid()` itself, rather than trusting
 -- a caller-supplied payer id, so a non-payer still can't call this for a bill they don't own.
+-- Reuses the same `is_bill_payer`/`is_bill_closed` helpers every other policy and trigger already
+-- shares (`shared_bills_rls.sql`), rather than re-deriving the same checks by hand (code review).
 --
--- Idempotent the same way `join_bill` is (returns the existing row rather than erroring) rather
--- than raising on a duplicate invite: the payer searching and tapping the same person twice (e.g.
--- after a slow network response made the first tap look like it didn't register) is a normal,
--- expected case, not an error.
+-- Returns a row plus `already_member`: true if the invited user already had a `bill_people` row
+-- on this bill (a repeat invite, or they'd already joined themselves as a member/guest via the
+-- share link) - the caller can tell a payer "already on this bill" instead of a false "Invited"
+-- when nothing actually changed (code review). This only catches a pre-existing row keyed by the
+-- same real `user_id`; it deliberately does *not* attempt to merge into an existing `kind =
+-- 'named'` placeholder for the same real person (a `'named'` row never carries a `user_id`, so
+-- there's nothing to match it by) - that's the same identity-merge gap `join_bill`'s own migration
+-- already calls out and leaves unsolved, not something this RPC introduces.
 --
--- Sending an actual push notification about the invite is out of scope here - that's the `notify`
--- function (SPEC 8.7), a separate, later task that reads this row once it exists.
+-- Sending an actual push notification about a successful invite is out of scope here - that's
+-- the `notify` function (SPEC 8.7), a separate, later task that reads this row once it exists.
 create function public.invite_bill_member(p_bill_id uuid, p_user_id uuid)
-returns public.bill_people
+returns table (
+  id uuid,
+  bill_id uuid,
+  user_id uuid,
+  display_name text,
+  kind text,
+  joined_at timestamptz,
+  already_member boolean
+)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_bill public.bills;
+  v_profile public.profiles;
+  v_existing public.bill_people;
   v_person public.bill_people;
 begin
-  select * into v_bill from public.bills where id = p_bill_id;
-  if v_bill.id is null then
+  if not exists (select 1 from public.bills b where b.id = p_bill_id) then
     raise exception 'no bill found for id %', p_bill_id;
   end if;
 
-  if v_bill.payer_user_id is distinct from auth.uid() then
+  if not public.is_bill_payer(p_bill_id) then
     raise exception 'invite_bill_member: only the bill''s payer may invite a member';
   end if;
 
   -- SPEC 8.5: closed bills are read-only, same as every other payer-only write
   -- (`bill_people_insert_named_by_payer` blocks this the same way for a 'named' row).
-  if v_bill.status = 'closed' then
+  if public.is_bill_closed(p_bill_id) then
     raise exception 'invite_bill_member: bill % is closed', p_bill_id;
-  end if;
-
-  if not exists (select 1 from public.profiles p where p.id = p_user_id) then
-    raise exception 'invite_bill_member: no profile found for user %', p_user_id;
   end if;
 
   -- A payer inviting themselves would just collide with their own 'payer' row on
@@ -55,22 +65,31 @@ begin
     raise exception 'invite_bill_member: the payer cannot invite themselves';
   end if;
 
-  insert into public.bill_people (bill_id, user_id, display_name, kind)
-  select
-    v_bill.id,
-    p_user_id,
-    coalesce(p.display_name, p.username, 'Invited member'),
-    'member'
-  from public.profiles p
-  where p.id = p_user_id
-  on conflict (bill_id, user_id) do nothing
-  returning * into v_person;
-
-  if v_person.id is null then
-    select * into v_person from public.bill_people where bill_id = v_bill.id and user_id = p_user_id;
+  -- One profiles lookup, reused for both the existence guard and the insert's own display name
+  -- (code review) - `join_bill` doesn't need this because it takes `display_name` as a
+  -- parameter instead.
+  select * into v_profile from public.profiles p where p.id = p_user_id;
+  if v_profile.id is null then
+    raise exception 'invite_bill_member: no profile found for user %', p_user_id;
   end if;
 
-  return v_person;
+  select * into v_existing from public.bill_people bp
+  where bp.bill_id = p_bill_id and bp.user_id = p_user_id;
+
+  if v_existing.id is not null then
+    return query select
+      v_existing.id, v_existing.bill_id, v_existing.user_id, v_existing.display_name,
+      v_existing.kind, v_existing.joined_at, true;
+    return;
+  end if;
+
+  insert into public.bill_people (bill_id, user_id, display_name, kind)
+  values (p_bill_id, p_user_id, coalesce(v_profile.display_name, v_profile.username, 'Invited member'), 'member')
+  returning * into v_person;
+
+  return query select
+    v_person.id, v_person.bill_id, v_person.user_id, v_person.display_name,
+    v_person.kind, v_person.joined_at, false;
 end;
 $$;
 
