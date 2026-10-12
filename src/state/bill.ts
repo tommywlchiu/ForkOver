@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import type { StoredBill } from '../data/localBillStore';
 import { getReceiptReader, type ImageCapture } from '../data/receiptReader';
-import { createSupabaseBillStore, fetchBillSnapshot, subscribeToBillChanges } from '../data/supabaseBillStore';
+import { createSupabaseBillStore, fetchBillSnapshot, inviteBillMember, subscribeToBillChanges } from '../data/supabaseBillStore';
 import { resolveClaims, type ClaimMode, type ResolvedItem } from '../lib/claims/resolve';
 import { calculateSplit, type Fee, type Person, type SplitResult, type Tip } from '../lib/split/split';
 import type { TipSource } from '../lib/receipt/schema';
@@ -63,6 +63,15 @@ export type BillState = {
   setTip: (billId: string, tip: Tip, source: TipSource | null) => void;
 
   addPerson: (billId: string, name: string) => string;
+  /**
+   * Invites a specific user, found via username search, as a real bill member (SPEC.md 8.2, M4
+   * in-app-sending task). Resolves to an error message on failure, or `null` on success - the
+   * caller (the share screen) doesn't need the new `bill_people` row itself: it reaches this
+   * store through the existing realtime subscription (`subscribeToBill`), the same path any other
+   * screen's own change arrives through. `alreadyMember` is true when the invited user already
+   * had a row on this bill - nothing new happened, so the caller shouldn't report a fresh invite.
+   */
+  invitePerson: (billId: string, userId: string) => Promise<{ error: string | null; alreadyMember: boolean }>;
   toggleMine: (billId: string, itemId: string, personId: string) => void;
   toggleShared: (billId: string, itemId: string, personId: string) => void;
 
@@ -244,6 +253,10 @@ export const useBillStore = create<BillState>((set, get) => {
     loadBill: (bill) => {
       dataStore.replaceBill(bill); // same one-way flow as subscribeToBill/refetchBill above
       refresh(bill.id);
+    },
+
+    invitePerson: async (billId, userId) => {
+      return inviteBillMember(billId, userId);
     },
 
     addItem: (billId, item) => {

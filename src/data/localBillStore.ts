@@ -37,6 +37,14 @@ export type StoredBill = {
   /** The payer's Venmo username, for the "Pay on Venmo" button (SPEC 2.3 step 4, 6.6). Null if
    *  they haven't set one, or (same as `shareToken`) before the bill is promoted. */
   payerVenmoUsername: string | null;
+  /**
+   * The payer's raw auth user id (M4 in-app-sending task), not their `bill_people` id like
+   * `payerId` above - lets a screen check "is the signed-in user actually this bill's payer"
+   * (`session.userId === payerUserId`) without threading a `user_id` through `StoredPerson`,
+   * which has none. `null` only if a realtime snapshot's own `bill_people` read for the payer
+   * somehow comes back empty (same defensive fallback shape as `payerId` itself).
+   */
+  payerUserId: string | null;
   people: StoredPerson[];
   items: StoredItem[];
   discountCents: number;
@@ -144,6 +152,9 @@ export function createLocalBillStore(): BillStore {
         payerId: payer.id,
         shareToken: null,
         payerVenmoUsername: null,
+        // Pre-promotion, the draft's payer id is itself the raw auth user id (see `promoteBill`'s
+        // own doc) - so the two agree here and only diverge once a real `bill_people.id` exists.
+        payerUserId: payer.id,
         people: [{ id: payer.id, name: payer.name, kind: 'payer' }],
         items: [],
         discountCents: 0,

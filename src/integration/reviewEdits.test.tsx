@@ -101,7 +101,9 @@ describe('review edits', () => {
     const split = useBillStore.getState().getSplit(onlyBill().id);
     expect(split?.ok && split.totals.feesCents).toBe(350);
     expect(split?.ok && split.totals.grandTotalCents).toBe(2350);
-  });
+    // Full sign-in-to-screen flow, same as the other integration tests that drive it (e.g.
+    // paymentFlow.test.tsx) - past the 5000ms default so CI contention doesn't flake it.
+  }, 15000);
 
   it('shows the scanned tax in the tax input once the scan finishes', async () => {
     renderRouter('./src/app', { initialUrl: '/' });

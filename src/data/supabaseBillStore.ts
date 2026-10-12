@@ -112,6 +112,9 @@ function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: Fe
     // for that invariant somehow not holding - never trust it as the real `bill_people.id` claims
     // reference.
     payerId: payer?.id ?? previous?.payerId ?? '',
+    // The payer's raw auth user id (M4 in-app-sending task) - lets a screen check "is the
+    // signed-in user actually this bill's payer" without a `bill_people.id` on hand yet.
+    payerUserId: payer?.user_id ?? previous?.payerUserId ?? null,
     // Includes member/guest rows too (not just payer/named): once the join-bill flow exists
     // (out of scope here), the payer's bill screen should see their claims live without another
     // change to this module.
@@ -147,8 +150,7 @@ function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: Fe
  * they vanished, after a realtime-triggered refetch. Callers (realtime's `onSnapshot`,
  * `promoteBill`) already treat `null` as "couldn't confirm anything changed - leave the cache
  * alone" rather than erasing good local state.
- */
-/**
+ *
  * `includeVenmo` defaults to `false`: `get_bill_payer_venmo` is a security-definer RPC with its
  * own `profiles` join, and nothing on the payer's own screens (review/share/the live bill screen)
  * ever reads `payerVenmoUsername` - only the public claim link does (SPEC 2.3 step 4). Every other
@@ -292,6 +294,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
         payerId: payer.id,
         shareToken: null,
         payerVenmoUsername: null,
+        payerUserId: payer.id, // pre-promotion, same as payerId - see localBillStore.ts's own doc
         people: [{ id: payer.id, name: payer.name, kind: 'payer' }],
         items: [],
         discountCents: 0,
@@ -983,4 +986,52 @@ export async function joinBillByToken(token: string, displayName: string): Promi
     return { ok: false, error: { reason: 'error', message: "Joined, but couldn't load the bill. Try again." } };
   }
   return { ok: true, personId: person.id, bill };
+}
+
+/**
+ * Invites a specific, known user (one the payer chose from `search_usernames`'s results) as a
+ * real `kind = 'member'` bill_people row (SPEC.md 8.2, M4 in-app-sending task). Calls the
+ * `invite_bill_member` RPC (`supabase/migrations/20261011010000_invite_bill_member.sql`) - the
+ * only payer-only path that can carry a real `user_id`: `join_bill` only lets a caller add
+ * *themselves*, and the payer's own direct 'named'-row insert path is schema-blocked from ever
+ * carrying one (`bill_people_named_has_no_user`), specifically so a payer can't silently grant
+ * someone access without their consent.
+ *
+ * Only meaningful on an already-promoted (real) bill - the share screen this backs never renders
+ * before that. Doesn't touch the local cache itself: the new row reaches every subscribed screen,
+ * including the inviting payer's own, through the realtime subscription every bill screen already
+ * has via `useResolvedBill`/`subscribeToBillChanges` - `bill_people` is already in the
+ * `supabase_realtime` publication (SPEC 8.3) and a `security definer` RPC's insert fires that same
+ * replication stream like any other insert - confirmed against a real local Supabase stack (ran a
+ * one-off script that invites a member and asserts the subscribed client's `postgres_changes`
+ * callback actually fires), not assumed.
+ *
+ * `alreadyMember` mirrors the RPC's own `already_member` column (code review): the invited user
+ * may already have a `bill_people` row on this bill (a repeat invite, or they'd already joined
+ * themselves as a member/guest via the share link), in which case nothing new was created and the
+ * caller (the share screen) shouldn't claim a fresh "Invited" happened.
+ *
+ * The RPC is a `returns table (...)` function, so postgrest always hands back an array, even for
+ * one row - `data?.[0]`, not `data` itself. Wrapped in try/catch (every other async handler in the
+ * share screen is) so a network-layer failure that rejects instead of resolving with `{ error }`
+ * still surfaces as a message instead of leaving the caller's "inviting..." state stuck forever.
+ *
+ * The RPC's own `on conflict (bill_id, user_id) do nothing` is what actually makes a concurrent
+ * double-invite safe (two devices, a retry racing the first attempt, or an invite racing that
+ * same person's own `join_bill` call) - but a bare Postgres `23505` (unique_violation) is treated
+ * as `alreadyMember: true` too, belt-and-suspenders, the same way `session.ts`'s `setUsername`
+ * already treats its own unique violation as "taken" rather than a generic failure.
+ */
+export async function inviteBillMember(billId: string, userId: string): Promise<{ error: string | null; alreadyMember: boolean }> {
+  try {
+    const { data, error } = await supabase.rpc('invite_bill_member', { p_bill_id: billId, p_user_id: userId });
+    if (error) {
+      if (error.code === '23505') return { error: null, alreadyMember: true };
+      return { error: error.message, alreadyMember: false };
+    }
+    const row = (Array.isArray(data) ? data[0] : data) as { already_member?: boolean } | null;
+    return { error: null, alreadyMember: !!row?.already_member };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not invite that person. Try again.', alreadyMember: false };
+  }
 }

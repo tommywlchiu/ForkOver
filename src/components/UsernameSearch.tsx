@@ -3,8 +3,12 @@
  * `search_usernames` RPC, which requires a signed-in caller, trims/ignores prefixes under 2
  * characters, and returns at most 10 rows. Debounced so it doesn't call on every keystroke.
  *
- * Standalone and not yet wired into any invite flow: a later task supplies `onSelect` to insert a
- * `bill_people` row once the realtime bill store can do that.
+ * Wired into the share screen's "Send in app" invite flow (M4 in-app-sending task): `onSelect`
+ * calls `invite_bill_member` with the chosen result. `excludeUserId` (typically the signed-in
+ * caller's own id) filters that user out of the results client-side - `search_usernames` itself
+ * doesn't know what this search is for, so it has no reason to exclude anyone - cheaper than
+ * letting the caller tap themselves and get a guaranteed-to-repeat "cannot invite yourself" error
+ * back from whatever RPC actually acts on the selection.
  */
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -22,7 +26,14 @@ export type UsernameSearchResult = {
 
 type SearchState = 'idle' | 'loading' | 'results' | 'empty' | 'error';
 
-export function UsernameSearch({ onSelect }: { onSelect: (user: UsernameSearchResult) => void }) {
+export function UsernameSearch({
+  onSelect,
+  excludeUserId,
+}: {
+  onSelect: (user: UsernameSearchResult) => void;
+  /** Filters this user id out of the results (e.g. the signed-in caller, who can't invite themselves). */
+  excludeUserId?: string;
+}) {
   const theme = useThemeTokens();
   const [query, setQuery] = useState('');
   const [state, setState] = useState<SearchState>('idle');
@@ -56,13 +67,13 @@ export function UsernameSearch({ onSelect }: { onSelect: (user: UsernameSearchRe
         setState('error');
         return;
       }
-      const rows = (data ?? []) as UsernameSearchResult[];
+      const rows = ((data ?? []) as UsernameSearchResult[]).filter((row) => row.id !== excludeUserId);
       setResults(rows);
       setState(rows.length > 0 ? 'results' : 'empty');
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
-  }, [query]);
+  }, [query, excludeUserId]);
 
   return (
     <View>
