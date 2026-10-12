@@ -162,6 +162,12 @@ When the captain says to merge PR `<n>`:
      `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` and match its `CommandLine` against
      the worktree path. Stop the process, delete the directory directly (git may have already dropped
      it from its registry), then run `git worktree prune` to confirm no stale metadata remains.
+   - `/code-review` can check out a branch in the main checkout rather than a separate worktree.
+     If `git merge --ff-only` fails with "Diverging branches can't be fast-forwarded" and no local
+     commits were made, run `git branch --show-current` first. If the main checkout is on a leftover
+     review branch (e.g., `pr-<n>`) instead of `master`, run `git status --short` to confirm clean,
+     then `git switch master`, and retry the merge. Clean up the stray branch with
+     `git branch -D pr-<n>` once confirmed superseded by the merge.
    - Delete the worker's local branch (`git worktree list` shows it before removal) with
      `git branch -D <branch>`, but only if it points at the PR's `headRefOid`.
    - Delete the remote branch with `git push origin --delete <branch>`. This repo doesn't
