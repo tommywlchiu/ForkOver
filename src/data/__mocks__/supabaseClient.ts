@@ -61,6 +61,15 @@ const billTables: Record<BillTable, Map<string, Row>> = {
   payments: new Map(),
 };
 
+/** Mirrors `is_bill_member` (SPEC 8.2) for the one select this mock gates - see the `bills`
+ *  branch in `FakeQuery.run()`'s `select` case. */
+function isBillMember(billId: string, userId: string | undefined): boolean {
+  if (!userId) return false;
+  const bill = billTables.bills.get(billId);
+  if (bill?.payer_user_id === userId) return true;
+  return [...billTables.bill_people.values()].some((row) => row.bill_id === billId && row.user_id === userId);
+}
+
 /** `claims` has no single-column id (its primary key is (item_id, person_id)); everything else does. */
 function keyFor(table: BillTable, row: Row): string {
   if (table === 'claims') return `${row.item_id}:${row.person_id}`;
@@ -104,7 +113,15 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string
     const matches = () => [...rows.values()].filter((row) => this.filters.every((f) => f(row)));
 
     if (this.op === 'select') {
-      const found = matches();
+      let found = matches();
+      // The one bit of real RLS this generic, policy-blind stand-in simulates (see the module
+      // doc): `bills_select_members` (SPEC 8.2 "Membership") - without it, the public claim
+      // route's "is this caller already a member?" probe (`fetchBillByShareTokenIfMember`) would
+      // find a bill by its `share_token` for literally anyone, including a guest who hasn't
+      // joined yet, and the route would never reach `join_bill` at all.
+      if (this.table === 'bills') {
+        found = found.filter((row) => isBillMember(row.id as string, currentSession?.user.id));
+      }
       if (this.wantsSingle || this.wantsMaybeSingle) {
         if (found.length === 0) {
           return this.wantsSingle ? { data: null, error: { message: 'no rows found' } } : { data: null, error: null };
