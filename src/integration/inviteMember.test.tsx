@@ -77,7 +77,9 @@ describe('send in app', () => {
 
     // Selecting a result counts as sending the bill, the same as copying or sharing the link.
     expect(bill.sentAt).not.toBeNull();
-  });
+    // Full sign-in-to-screen flow, same as the other integration tests that drive it (e.g.
+    // paymentFlow.test.tsx) - past the 5000ms default so CI contention doesn't flake it.
+  }, 15000);
 
   it('shows an error and does not add a member when the invite is rejected', async () => {
     __seedProfile('friend-2', { username: 'casey', display_name: 'Casey' });
@@ -98,5 +100,5 @@ describe('send in app', () => {
 
     await waitFor(() => expect(screen.getByTestId('invite-error')).toBeTruthy());
     expect(onlyBill().people.some((p) => p.name === 'Casey')).toBe(false);
-  });
+  }, 15000);
 });
