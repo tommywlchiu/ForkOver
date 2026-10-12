@@ -298,7 +298,9 @@ export const supabase = {
 
     // `invite_bill_member` (supabase/migrations/20261011010000_invite_bill_member.sql): mirrors
     // the real RPC's happy path (payer-only, rejects a closed bill, idempotent on a repeat
-    // invite) for the integration tests that drive the share screen's "send in app" flow.
+    // invite, flags `already_member`) for the integration tests that drive the share screen's
+    // "send in app" flow. Same check order as the real function, and returns an array of one row
+    // (a `returns table` RPC), not a bare object, to match it.
     if (fn === 'invite_bill_member') {
       if (!currentSession) return { data: null, error: { message: 'invite_bill_member requires a session' } };
       const billId = args.p_bill_id as string;
@@ -311,13 +313,13 @@ export const supabase = {
       if (bill.status === 'closed') {
         return { data: null, error: { message: `invite_bill_member: bill ${billId} is closed` } };
       }
-      const profile = profiles.get(userId);
-      if (!profile) return { data: null, error: { message: `invite_bill_member: no profile found for user ${userId}` } };
       if (userId === currentSession.user.id) {
         return { data: null, error: { message: 'invite_bill_member: the payer cannot invite themselves' } };
       }
+      const profile = profiles.get(userId);
+      if (!profile) return { data: null, error: { message: `invite_bill_member: no profile found for user ${userId}` } };
       const existing = [...billTables.bill_people.values()].find((row) => row.bill_id === billId && row.user_id === userId);
-      if (existing) return { data: existing, error: null };
+      if (existing) return { data: [{ ...existing, already_member: true }], error: null };
       const person: Row = {
         id: crypto.randomUUID(),
         bill_id: billId,
@@ -326,7 +328,7 @@ export const supabase = {
         kind: 'member',
       };
       billTables.bill_people.set(person.id as string, person);
-      return { data: person, error: null };
+      return { data: [{ ...person, already_member: false }], error: null };
     }
 
     if (fn === 'search_usernames') {

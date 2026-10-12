@@ -105,6 +105,9 @@ function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: Fe
     // for that invariant somehow not holding - never trust it as the real `bill_people.id` claims
     // reference.
     payerId: payer?.id ?? previous?.payerId ?? '',
+    // The payer's raw auth user id (M4 in-app-sending task) - lets a screen check "is the
+    // signed-in user actually this bill's payer" without a `bill_people.id` on hand yet.
+    payerUserId: payer?.user_id ?? previous?.payerUserId ?? null,
     // Includes member/guest rows too (not just payer/named): once the join-bill flow exists
     // (out of scope here), the payer's bill screen should see their claims live without another
     // change to this module.
@@ -257,6 +260,7 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
         merchantName: null,
         currency: 'USD',
         payerId: payer.id,
+        payerUserId: payer.id, // pre-promotion, same as payerId - see localBillStore.ts's own doc
         people: [{ id: payer.id, name: payer.name, kind: 'payer' }],
         items: [],
         discountCents: 0,
@@ -882,10 +886,27 @@ export { fetchSnapshot as fetchBillSnapshot };
  * including the inviting payer's own, through the realtime subscription every bill screen already
  * has via `useResolvedBill`/`subscribeToBillChanges` - `bill_people` is already in the
  * `supabase_realtime` publication (SPEC 8.3) and a `security definer` RPC's insert fires that same
- * replication stream like any other insert, confirmed against a real local Supabase stack rather
- * than assumed.
+ * replication stream like any other insert - confirmed against a real local Supabase stack (ran a
+ * one-off script that invites a member and asserts the subscribed client's `postgres_changes`
+ * callback actually fires), not assumed.
+ *
+ * `alreadyMember` mirrors the RPC's own `already_member` column (code review): the invited user
+ * may already have a `bill_people` row on this bill (a repeat invite, or they'd already joined
+ * themselves as a member/guest via the share link), in which case nothing new was created and the
+ * caller (the share screen) shouldn't claim a fresh "Invited" happened.
+ *
+ * The RPC is a `returns table (...)` function, so postgrest always hands back an array, even for
+ * one row - `data?.[0]`, not `data` itself. Wrapped in try/catch (every other async handler in the
+ * share screen is) so a network-layer failure that rejects instead of resolving with `{ error }`
+ * still surfaces as a message instead of leaving the caller's "inviting..." state stuck forever.
  */
-export async function inviteBillMember(billId: string, userId: string): Promise<{ error: string | null }> {
-  const { error } = await supabase.rpc('invite_bill_member', { p_bill_id: billId, p_user_id: userId });
-  return { error: error ? error.message : null };
+export async function inviteBillMember(billId: string, userId: string): Promise<{ error: string | null; alreadyMember: boolean }> {
+  try {
+    const { data, error } = await supabase.rpc('invite_bill_member', { p_bill_id: billId, p_user_id: userId });
+    if (error) return { error: error.message, alreadyMember: false };
+    const row = (Array.isArray(data) ? data[0] : data) as { already_member?: boolean } | null;
+    return { error: null, alreadyMember: !!row?.already_member };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not invite that person. Try again.', alreadyMember: false };
+  }
 }

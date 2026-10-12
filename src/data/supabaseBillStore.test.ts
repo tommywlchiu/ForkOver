@@ -275,7 +275,7 @@ describe('createSupabaseBillStore', () => {
     __seedProfile('friend-1', { username: 'baileyb', display_name: 'Bailey' });
 
     const first = await inviteBillMember(promoted.id, 'friend-1');
-    expect(first.error).toBeNull();
+    expect(first).toEqual({ error: null, alreadyMember: false });
 
     const { data: peopleRows } = await supabase.from('bill_people').select('user_id,display_name,kind').eq('bill_id', promoted.id);
     expect(peopleRows).toEqual(
@@ -283,9 +283,10 @@ describe('createSupabaseBillStore', () => {
     );
 
     // Calling it again for the same user doesn't create a second row (matches join_bill's own
-    // idempotent-return pattern, same as the pgTAP coverage for the real RPC).
+    // idempotent-return pattern, same as the pgTAP coverage for the real RPC), and is flagged
+    // `alreadyMember` so the caller doesn't report a fresh invite when nothing changed.
     const second = await inviteBillMember(promoted.id, 'friend-1');
-    expect(second.error).toBeNull();
+    expect(second).toEqual({ error: null, alreadyMember: true });
     const { data: afterSecondInvite } = await supabase.from('bill_people').select('id').eq('bill_id', promoted.id).eq('user_id', 'friend-1');
     expect(afterSecondInvite).toHaveLength(1);
   });
