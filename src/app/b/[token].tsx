@@ -38,7 +38,7 @@ import { buildVenmoPayLink } from '../../lib/pay/venmo';
 import { formatMoney } from '../../lib/money/format';
 import { analytics } from '../../state/analytics';
 import { useBillStore } from '../../state/bill';
-import { ensureSession, useSessionStore } from '../../state/session';
+import { ensureSession, fetchOwnDisplayName } from '../../state/session';
 import { useResolvedBill } from '../../state/useResolvedBill';
 
 type Phase = 'loading' | 'joining' | 'name-prompt' | 'not-found' | 'closed-unavailable' | 'error' | 'ready';
@@ -124,18 +124,26 @@ export default function ClaimLinkScreen() {
     (async () => {
       if (!token) return;
       try {
-        const { userId, isAnonymous } = await ensureSession();
-        const existing = await fetchBillByShareTokenIfMember(token);
+        const { userId, isAnonymous, metadataName } = await ensureSession();
+        const lookup = await fetchBillByShareTokenIfMember(token);
         if (cancelled) return;
-        if (existing) {
-          const ownId = await findOwnPersonId(existing.id, userId);
+        // A transient read failure is kept distinct from "not a member yet" (ShareTokenLookup's
+        // own doc, code review on PR #34): falling through to join_bill here would raise "this
+        // bill is closed" for an actual member of a closed bill who just hit a network blip,
+        // which is wrong and confusing - a retryable error state is the honest one.
+        if (lookup.kind === 'error') {
+          setPhase('error');
+          return;
+        }
+        if (lookup.kind === 'member') {
+          const ownId = await findOwnPersonId(lookup.bill.id, userId);
           if (cancelled) return;
           if (!ownId) {
             setPhase('error');
             return;
           }
-          loadBill(existing);
-          setBillId(existing.id);
+          loadBill(lookup.bill);
+          setBillId(lookup.bill.id);
           setPersonId(ownId);
           setPhase('ready');
           analytics.record('claim_page_opened');
@@ -146,9 +154,15 @@ export default function ClaimLinkScreen() {
           return;
         }
         // Signed-in, not yet a member: join silently with the caller's own profile name (SPEC
-        // 2.3 step 2 - the name prompt is guest-only).
-        const session = useSessionStore.getState();
-        const autoName = clampDisplayName(session.displayName ?? session.username ?? 'Member');
+        // 2.3 step 2 - the name prompt is guest-only). Reads `profiles` directly rather than
+        // `useSessionStore` (code review on PR #34) - the store's own hydration is fire-and-forget
+        // and can still be in flight this early, especially on a cold deep link straight into this
+        // route; losing that race used to silently (and permanently, `join_bill` is idempotent)
+        // join a real member under the literal name "Member".
+        if (cancelled) return;
+        const ownName = await fetchOwnDisplayName(userId);
+        if (cancelled) return;
+        const autoName = clampDisplayName(ownName ?? metadataName ?? 'Member');
         await joinWith(autoName, () => cancelled);
       } catch {
         if (!cancelled) setPhase('error');

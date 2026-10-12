@@ -6,7 +6,7 @@
  * unpromoted one stays local-only, same as `createLocalBillStore` always did.
  */
 import { supabase } from './supabaseClient';
-import { createDebouncedLatestFetcher, createSupabaseBillStore, inviteBillMember } from './supabaseBillStore';
+import { createDebouncedLatestFetcher, createSupabaseBillStore, fetchBillByShareTokenIfMember, inviteBillMember } from './supabaseBillStore';
 
 jest.mock('./supabaseClient');
 const { __resetFakeSupabase, __seedProfile } = jest.requireMock('./supabaseClient') as {
@@ -80,10 +80,7 @@ describe('createSupabaseBillStore', () => {
     const promoted = await store.promoteBill(bill.id, 'server-bill-1');
 
     expect(promoted.id).toBe('server-bill-1');
-    // `create_manual_bill` is the RPC this adopt-an-existing-id path has no business calling
-    // (`fetchSnapshot`'s own `get_bill_payer_venmo` RPC, part of every snapshot read-back, is
-    // expected here and isn't what this test is about).
-    expect(rpcSpy.mock.calls.some((call) => call[0] === 'create_manual_bill')).toBe(false);
+    expect(rpcSpy).not.toHaveBeenCalled();
     rpcSpy.mockRestore();
   });
 
@@ -173,9 +170,7 @@ describe('createSupabaseBillStore', () => {
     const promoted = await store.promoteBill(bill.id);
     expect(promoted.id).not.toBe(bill.id);
     expect(promoted.items).toHaveLength(1);
-    // Same caveat as above: `create_manual_bill` must not run again for this already-minted
-    // draft; `get_bill_payer_venmo` from the retry's own `fetchSnapshot` is expected.
-    expect(rpcSpy.mock.calls.some((call) => call[0] === 'create_manual_bill')).toBe(false);
+    expect(rpcSpy).not.toHaveBeenCalled();
     rpcSpy.mockRestore();
   });
 
@@ -249,11 +244,7 @@ describe('createSupabaseBillStore', () => {
     const [a, b] = await Promise.all([store.promoteBill(bill.id), store.promoteBill(bill.id)]);
 
     expect(a.id).toBe(b.id);
-    // Exactly one `create_manual_bill` call despite two concurrent `promoteBill` calls - the
-    // second awaits the first's in-flight attempt instead of minting a second bill. (There's also
-    // exactly one `get_bill_payer_venmo` call, from that single attempt's own `fetchSnapshot`
-    // read-back - not asserted by name here since this test is specifically about the mint.)
-    expect(rpcSpy.mock.calls.filter((call) => call[0] === 'create_manual_bill')).toHaveLength(1);
+    expect(rpcSpy).toHaveBeenCalledTimes(1);
     const { data: bills } = await supabase.from('bills').select('id').eq('payer_user_id', userId);
     expect(bills).toHaveLength(1);
     rpcSpy.mockRestore();
@@ -436,6 +427,37 @@ describe('createSupabaseBillStore', () => {
     // The merge reverted to its two original items; the concurrent, unrelated addItem survived.
     expect(current.items.map((i) => i.name).sort()).toEqual(['Beer', 'Beer', 'Soda']);
     expect(current.items.some((i) => i.id === unrelated.id)).toBe(true);
+  });
+});
+
+// Code review on PR #34: a transient read failure used to look identical to "not a member" (both
+// collapsed to `null`), so the public claim link's caller would fall through to `join_bill`,
+// which rejects a closed bill unconditionally - telling an actual member of a closed bill who hit
+// a network blip "this bill is closed and you were never on it" instead of a retryable error.
+describe('fetchBillByShareTokenIfMember', () => {
+  it('returns not_member, not error, for a token with no RLS-visible row', async () => {
+    await signIn();
+    const result = await fetchBillByShareTokenIfMember('does-not-exist');
+    expect(result).toEqual({ kind: 'not_member' });
+  });
+
+  it('returns error, not not_member, when the read itself fails', async () => {
+    await signIn();
+    const fromSpy = jest.spyOn(supabase, 'from').mockImplementationOnce(
+      () =>
+        ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: { message: 'network blip' } }),
+            }),
+          }),
+        }) as unknown as ReturnType<typeof supabase.from>,
+    );
+
+    const result = await fetchBillByShareTokenIfMember('whatever-token');
+
+    expect(result).toEqual({ kind: 'error' });
+    fromSpy.mockRestore();
   });
 });
 

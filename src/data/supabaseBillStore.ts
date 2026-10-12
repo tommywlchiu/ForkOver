@@ -161,6 +161,20 @@ function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: Fe
  * claim-link screen's own later realtime refreshes (which don't set `includeVenmo`) don't make
  * the Pay button flicker away once the initial, explicit fetch already found it.
  */
+/**
+ * One retry on failure, not zero (code review on PR #34): without it, a transient blip on the
+ * *first* `fetchSnapshot({ includeVenmo: true })` call (the only kind that ever sets it - see that
+ * function's own doc) permanently loses the Pay button for the rest of the session, since
+ * `previous` is always `undefined` on that first call (there's nothing to fall back to) and every
+ * later realtime/reconnect refetch for this bill passes `includeVenmo: false`, forwarding that
+ * `null` forever rather than trying again.
+ */
+async function fetchPayerVenmoWithRetry(billId: string): Promise<QueryResult<string | null>> {
+  const first = (await supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId })) as unknown as QueryResult<string | null>;
+  if (!first.error) return first;
+  return (await supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId })) as unknown as QueryResult<string | null>;
+}
+
 async function fetchSnapshot(billId: string, previous: StoredBill | undefined, options?: { includeVenmo?: boolean }): Promise<StoredBill | null> {
   const includeVenmo = options?.includeVenmo ?? false;
   const [billRes, peopleRes, itemsRes, feesRes, claimsRes, venmoRes] = await Promise.all([
@@ -172,7 +186,7 @@ async function fetchSnapshot(billId: string, previous: StoredBill | undefined, o
     // Best-effort: a missing/failed venmo lookup just means no "Pay on Venmo" button, not a
     // reason to fail the whole snapshot the way the other reads above do.
     includeVenmo
-      ? (supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId }) as unknown as Promise<QueryResult<string | null>>)
+      ? fetchPayerVenmoWithRetry(billId)
       : Promise.resolve({ data: null, error: null, skipped: true } as QueryResult<string | null> & { skipped: true }),
   ]);
   if (billRes.error || !billRes.data || peopleRes.error || itemsRes.error || feesRes.error || claimsRes.error) return null;
@@ -939,17 +953,32 @@ export async function findOwnPersonId(billId: string, userId: string): Promise<s
   return (data as { id: string }).id;
 }
 
+/**
+ * `fetchBillByShareTokenIfMember`'s result: RLS returns an empty `bills` row either because the
+ * token doesn't exist or because the caller isn't a member yet (`not_member`) - the caller can't
+ * tell which apart from this alone, which is why the guest/member join path exists to tell the
+ * two apart (`join_bill` does know the difference). `error` is its own case, not folded into
+ * `not_member` (code review on PR #34): a transient read failure used to look identical to "not a
+ * member", so the caller fell through to `joinBillByToken` -> `join_bill`, which rejects a closed
+ * bill unconditionally, even for an idempotent rejoin - an actual member of a closed bill hitting
+ * a transient error would wrongly be told "this bill is closed and you were never on it" instead
+ * of a retryable error.
+ */
+export type ShareTokenLookup = { kind: 'member'; bill: StoredBill } | { kind: 'not_member' } | { kind: 'error' };
+
 /** Resolves a share token to a full bill snapshot, but only if the caller is already a member
- *  (RLS does the actual check - this just reads `bills` by `share_token` instead of `id`). Returns
- *  `null` either because the token doesn't exist or because the caller isn't a member yet; the
- *  caller can't tell which from this alone (RLS returns an empty result either way), which is why
- *  the guest/member join path below exists to tell the two apart. */
-export async function fetchBillByShareTokenIfMember(token: string): Promise<StoredBill | null> {
+ *  (RLS does the actual check - this just reads `bills` by `share_token` instead of `id`). See
+ *  `ShareTokenLookup`'s own doc for why "not a member" and "the read itself failed" are kept
+ *  distinct rather than both collapsing to the same falsy result. */
+export async function fetchBillByShareTokenIfMember(token: string): Promise<ShareTokenLookup> {
   const { data, error } = await supabase.from('bills').select('id').eq('share_token', token).maybeSingle();
-  if (error || !data) return null;
+  if (error) return { kind: 'error' };
+  if (!data) return { kind: 'not_member' };
   // `includeVenmo: true` - this is one of the two places a bill actually reaches the public claim
   // screen (fetchSnapshot's own doc explains why that's opt-in, not every caller's default).
-  return fetchSnapshot((data as { id: string }).id, undefined, { includeVenmo: true });
+  const bill = await fetchSnapshot((data as { id: string }).id, undefined, { includeVenmo: true });
+  if (!bill) return { kind: 'error' };
+  return { kind: 'member', bill };
 }
 
 export type JoinBillError = { reason: 'not_found' | 'closed' | 'invalid_name' | 'error'; message: string };

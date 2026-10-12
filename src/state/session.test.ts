@@ -3,7 +3,8 @@
  * the screen-level integration tests don't exercise directly: the taken-username error path and
  * `recordAiConsent`'s optimistic update plus revert-on-failure.
  */
-import { useSessionStore } from './session';
+import { supabase } from '../data/supabaseClient';
+import { ensureSession, fetchOwnDisplayName, useSessionStore } from './session';
 
 jest.mock('../data/supabaseClient');
 jest.mock('expo-auth-session', () => ({
@@ -62,5 +63,69 @@ describe('session store', () => {
     expect(useSessionStore.getState().aiConsentAt).toBeNull();
     await useSessionStore.getState().recordAiConsent();
     expect(useSessionStore.getState().aiConsentAt).not.toBeNull();
+  });
+});
+
+// Code review on PR #34: ensureSession had no in-flight dedup, unlike promoteBill's own fix for
+// the identical race class - two concurrent calls before either resolved could each decide "no
+// session yet" and mint a separate anonymous identity, the second clobbering the first's.
+describe('ensureSession', () => {
+  beforeEach(async () => {
+    __resetFakeSupabase();
+    await useSessionStore.getState().signOut();
+  });
+
+  it('dedups two concurrent calls into a single anonymous sign-in', async () => {
+    const signInSpy = jest.spyOn(supabase.auth, 'signInAnonymously');
+
+    const [a, b] = await Promise.all([ensureSession(), ensureSession()]);
+
+    expect(a.userId).toBe(b.userId);
+    expect(signInSpy).toHaveBeenCalledTimes(1);
+    signInSpy.mockRestore();
+  });
+
+  it('starts a fresh attempt once the previous one has resolved', async () => {
+    const first = await ensureSession();
+    await useSessionStore.getState().signOut();
+    const second = await ensureSession();
+
+    expect(second.userId).not.toBe(first.userId);
+  });
+});
+
+// Code review on PR #34: the public claim link's silent auto-join used to read the display name
+// straight off useSessionStore, which can still be mid-hydration (fetchProfile is fire-and-forget)
+// right after ensureSession() resolves - especially on a cold deep link into /b/[token]. Reading
+// `profiles` directly instead sidesteps that race entirely.
+describe('fetchOwnDisplayName', () => {
+  beforeEach(async () => {
+    __resetFakeSupabase();
+    await useSessionStore.getState().signOut();
+  });
+
+  it("returns the caller's own profile display_name", async () => {
+    await signInAsNewUser();
+    const userId = useSessionStore.getState().userId!;
+    const { __seedProfile } = jest.requireMock('../data/supabaseClient') as { __seedProfile: (id: string, p: object) => void };
+    __seedProfile(userId, { display_name: 'Riley Real Name' });
+
+    await expect(fetchOwnDisplayName(userId)).resolves.toBe('Riley Real Name');
+  });
+
+  it('falls back to username when display_name is unset', async () => {
+    await signInAsNewUser();
+    const userId = useSessionStore.getState().userId!;
+    const { __seedProfile } = jest.requireMock('../data/supabaseClient') as { __seedProfile: (id: string, p: object) => void };
+    __seedProfile(userId, { username: 'rileyr' });
+
+    await expect(fetchOwnDisplayName(userId)).resolves.toBe('rileyr');
+  });
+
+  it('returns null when neither is set', async () => {
+    await signInAsNewUser();
+    const userId = useSessionStore.getState().userId!;
+
+    await expect(fetchOwnDisplayName(userId)).resolves.toBeNull();
   });
 });

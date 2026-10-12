@@ -142,6 +142,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 }));
 
+/** The OAuth provider's own name fields, before `profiles.display_name` (which no client code
+ *  ever writes, SPEC 8.1 - see `handle_new_bill`'s matching fallback chain, migration
+ *  20261010090000) has a chance to override it. Shared by `applySession` below and
+ *  `fetchOwnDisplayName` (this module's export for the public claim link's auto-join path). */
+function metadataNameFrom(user: Session['user']): string | null {
+  return (user.user_metadata?.full_name as string | undefined) ?? (user.user_metadata?.name as string | undefined) ?? null;
+}
+
 function applySession(session: Session | null) {
   // An anonymous session (a guest from `ensureSession` below, SPEC 3) is not a real sign-in: the
   // main app's `(app)/_layout.tsx` gate checks `isSignedIn` to decide whether to show sign-in or
@@ -153,8 +161,7 @@ function applySession(session: Session | null) {
     return;
   }
   const { user } = session;
-  const metadataName =
-    (user.user_metadata?.full_name as string | undefined) ?? (user.user_metadata?.name as string | undefined) ?? null;
+  const metadataName = metadataNameFrom(user);
   useSessionStore.setState({
     isSignedIn: true,
     userId: user.id,
@@ -183,15 +190,57 @@ export const FREE_SCANS_PER_MONTH = 3;
  * `expo-sqlite`'s `localStorage` polyfill per supabaseClient.ts, already keeps a guest's anonymous
  * session across reopening the link, so this never creates a second one for the same browser/app
  * install) before minting a brand new anonymous session (SPEC 3 "anonymous sessions for guests").
- * Returns the resulting user id and whether that session is anonymous (an already-signed-in
- * member skips the name prompt; a guest, anonymous or not yet seen, gets one - SPEC 2.3 step 2).
+ * Returns the resulting user id, whether that session is anonymous (an already-signed-in member
+ * skips the name prompt; a guest, anonymous or not yet seen, gets one - SPEC 2.3 step 2), and the
+ * OAuth provider's own name (`metadataNameFrom`) straight off this same session - a real signed-in
+ * caller's auto-join path (`fetchOwnDisplayName` below) needs this as a fallback, and reading it
+ * here, directly off the session this call already has in hand, is what avoids a second race the
+ * way `useSessionStore` would've needed (see that function's own doc).
+ *
+ * Dedups concurrent calls the same way `promoteBill` does for the identical race class (code
+ * review on PR #34): without this, two calls racing before either resolves (e.g. a double effect
+ * fire) could each decide "no session yet" and call `signInAnonymously()`, minting two separate
+ * anonymous identities - the second silently clobbers `currentSession` out from under the first's
+ * still-in-flight caller.
  */
-export async function ensureSession(): Promise<{ userId: string; isAnonymous: boolean }> {
-  const { data } = await supabase.auth.getSession();
-  if (data.session?.user) {
-    return { userId: data.session.user.id, isAnonymous: !!data.session.user.is_anonymous };
+let ensureSessionInFlight: Promise<{ userId: string; isAnonymous: boolean; metadataName: string | null }> | null = null;
+
+export async function ensureSession(): Promise<{ userId: string; isAnonymous: boolean; metadataName: string | null }> {
+  if (ensureSessionInFlight) return ensureSessionInFlight;
+  const attempt = (async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.user) {
+      return {
+        userId: data.session.user.id,
+        isAnonymous: !!data.session.user.is_anonymous,
+        metadataName: metadataNameFrom(data.session.user),
+      };
+    }
+    const { data: anon, error } = await supabase.auth.signInAnonymously();
+    if (error || !anon.user) throw new Error(error?.message ?? 'Could not start a session.');
+    return { userId: anon.user.id, isAnonymous: true, metadataName: null };
+  })();
+  ensureSessionInFlight = attempt;
+  try {
+    return await attempt;
+  } finally {
+    ensureSessionInFlight = null;
   }
-  const { data: anon, error } = await supabase.auth.signInAnonymously();
-  if (error || !anon.user) throw new Error(error?.message ?? 'Could not start a session.');
-  return { userId: anon.user.id, isAnonymous: true };
+}
+
+/**
+ * Reads a signed-in caller's own `profiles.display_name`/`username` directly, rather than through
+ * `useSessionStore` (code review on PR #34): `applySession`'s own hydration (`fetchProfile`
+ * populating `displayName`/`username` into the store) is fire-and-forget, not awaited, so reading
+ * the store right after `ensureSession()` resolves can race it - especially on a cold deep link
+ * straight into `/b/[token]`, which sits outside the route groups that would otherwise already
+ * have triggered sign-in and let that hydration settle. Losing that race used to silently join a
+ * real member under the literal name "Member" - permanently, since `join_bill` is idempotent and
+ * never renames an existing row. Returns `null` if neither is set (`profiles.display_name` never
+ * is, in practice - see `metadataNameFrom`'s own doc); the caller falls back to `ensureSession`'s
+ * `metadataName`, mirroring `handle_new_bill`'s and `applySession`'s own fallback chain.
+ */
+export async function fetchOwnDisplayName(userId: string): Promise<string | null> {
+  const profile = await fetchProfile(userId);
+  return profile?.display_name ?? profile?.username ?? null;
 }
