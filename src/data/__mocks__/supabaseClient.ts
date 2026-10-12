@@ -37,7 +37,7 @@ type Profile = {
 type FakeSession = {
   access_token: string;
   refresh_token: string;
-  user: { id: string; user_metadata: { full_name: string } };
+  user: { id: string; user_metadata: { full_name: string }; is_anonymous?: boolean };
 };
 
 let currentSession: FakeSession | null = null;
@@ -221,6 +221,20 @@ export const supabase = {
       notify('SIGNED_OUT', null);
       return { error: null };
     },
+    // A guest opening a `b/[token]` link with no session at all (session.ts's `ensureSession`,
+    // SPEC 3 "anonymous sessions for guests"). Same shape as `setSession` above: a fresh fake
+    // user/profile per call, `is_anonymous: true` so callers can tell a guest from a real sign-in.
+    signInAnonymously: async () => {
+      const userId = `mock-anon-user-${++userCounter}`;
+      profiles.set(userId, { username: null, display_name: null, venmo_username: null, ai_consent_at: null });
+      currentSession = {
+        access_token: userId,
+        refresh_token: `mock-refresh-${userId}`,
+        user: { id: userId, user_metadata: { full_name: 'Guest' }, is_anonymous: true },
+      };
+      notify('SIGNED_IN', currentSession);
+      return { data: { session: currentSession, user: currentSession.user }, error: null };
+    },
   },
   from: (table: string) => {
     if (isBillTable(table)) {
@@ -283,6 +297,7 @@ export const supabase = {
         tip: null,
         sent_at: null,
         created_at: new Date().toISOString(),
+        share_token: `mock-share-token-${crypto.randomUUID()}`,
       };
       billTables.bills.set(bill.id as string, bill);
       const payerPerson: Row = {
@@ -294,6 +309,39 @@ export const supabase = {
       };
       billTables.bill_people.set(payerPerson.id as string, payerPerson);
       return { data: bill, error: null };
+    }
+
+    if (fn === 'join_bill') {
+      if (!currentSession) return { data: null, error: { message: 'join_bill requires a session (signed in or anonymous)' } };
+      const shareToken = String(args.p_share_token ?? '');
+      const name = String(args.p_display_name ?? '').trim();
+      const bill = [...billTables.bills.values()].find((row) => row.share_token === shareToken);
+      if (!bill) return { data: null, error: { message: 'no bill found for that share link' } };
+      if (bill.status === 'closed') return { data: null, error: { message: 'this bill is closed' } };
+      if (name.length < 1 || name.length > 30) {
+        return { data: null, error: { message: 'display_name must be 1 to 30 characters' } };
+      }
+      const existing = [...billTables.bill_people.values()].find(
+        (row) => row.bill_id === bill.id && row.user_id === currentSession!.user.id,
+      );
+      if (existing) return { data: existing, error: null };
+      const person: Row = {
+        id: crypto.randomUUID(),
+        bill_id: bill.id,
+        user_id: currentSession.user.id,
+        display_name: name,
+        kind: currentSession.user.is_anonymous ? 'guest' : 'member',
+      };
+      billTables.bill_people.set(person.id as string, person);
+      return { data: person, error: null };
+    }
+
+    if (fn === 'get_bill_payer_venmo') {
+      const billId = args.p_bill_id;
+      const bill = billTables.bills.get(billId as string);
+      if (!bill) return { data: null, error: null };
+      const payer = profiles.get(bill.payer_user_id as string);
+      return { data: payer?.venmo_username ?? null, error: null };
     }
 
     if (fn === 'search_usernames') {

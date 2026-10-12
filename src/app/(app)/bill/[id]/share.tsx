@@ -30,7 +30,7 @@ export default function ShareScreen() {
   // `share_token`, not a bill id - using `bill.id` here used to mint a link that route could never
   // actually open. `shareToken` is only ever null before the bill is promoted (supabaseBillStore.ts
   // `assemble()`), which `bill` already can't be once this screen has one to render at all.
-  const link = useMemo(() => (bill?.shareToken ? createURL(`b/${bill.shareToken}`) : null), [bill?.shareToken]);
+  const link = useMemo(() => (bill?.shareToken ? createURL(`b/${bill.shareToken}`) : null), [bill]);
 
   if (!bill) return <Redirect href="/" />;
 

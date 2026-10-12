@@ -77,7 +77,10 @@ describe('createSupabaseBillStore', () => {
     const promoted = await store.promoteBill(bill.id, 'server-bill-1');
 
     expect(promoted.id).toBe('server-bill-1');
-    expect(rpcSpy).not.toHaveBeenCalled();
+    // `create_manual_bill` is the RPC this adopt-an-existing-id path has no business calling
+    // (`fetchSnapshot`'s own `get_bill_payer_venmo` RPC, part of every snapshot read-back, is
+    // expected here and isn't what this test is about).
+    expect(rpcSpy.mock.calls.some((call) => call[0] === 'create_manual_bill')).toBe(false);
     rpcSpy.mockRestore();
   });
 
@@ -167,7 +170,9 @@ describe('createSupabaseBillStore', () => {
     const promoted = await store.promoteBill(bill.id);
     expect(promoted.id).not.toBe(bill.id);
     expect(promoted.items).toHaveLength(1);
-    expect(rpcSpy).not.toHaveBeenCalled();
+    // Same caveat as above: `create_manual_bill` must not run again for this already-minted
+    // draft; `get_bill_payer_venmo` from the retry's own `fetchSnapshot` is expected.
+    expect(rpcSpy.mock.calls.some((call) => call[0] === 'create_manual_bill')).toBe(false);
     rpcSpy.mockRestore();
   });
 
@@ -241,7 +246,11 @@ describe('createSupabaseBillStore', () => {
     const [a, b] = await Promise.all([store.promoteBill(bill.id), store.promoteBill(bill.id)]);
 
     expect(a.id).toBe(b.id);
-    expect(rpcSpy).toHaveBeenCalledTimes(1);
+    // Exactly one `create_manual_bill` call despite two concurrent `promoteBill` calls - the
+    // second awaits the first's in-flight attempt instead of minting a second bill. (There's also
+    // exactly one `get_bill_payer_venmo` call, from that single attempt's own `fetchSnapshot`
+    // read-back - not asserted by name here since this test is specifically about the mint.)
+    expect(rpcSpy.mock.calls.filter((call) => call[0] === 'create_manual_bill')).toHaveLength(1);
     const { data: bills } = await supabase.from('bills').select('id').eq('payer_user_id', userId);
     expect(bills).toHaveLength(1);
     rpcSpy.mockRestore();

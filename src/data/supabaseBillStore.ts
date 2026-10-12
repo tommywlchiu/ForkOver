@@ -157,7 +157,7 @@ async function fetchSnapshot(billId: string, previous: StoredBill | undefined): 
     supabase.from('claims').select('item_id,person_id,mode,created_by').eq('bill_id', billId),
     // Best-effort: a missing/failed venmo lookup just means no "Pay on Venmo" button, not a
     // reason to fail the whole snapshot the way the other reads above do.
-    supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId }) as Promise<QueryResult<string | null>>,
+    supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId }) as unknown as Promise<QueryResult<string | null>>,
   ]);
   if (billRes.error || !billRes.data || peopleRes.error || itemsRes.error || feesRes.error || claimsRes.error) return null;
   const payerVenmoUsername = venmoRes.error ? null : (venmoRes.data ?? null);
