@@ -1,7 +1,11 @@
 /**
- * Share (SPEC.md sections 2.2 step 5, 4): QR code for the bill link, copy
- * link, native share sheet. "Send in app" needs member accounts and search
- * (M4), so it stays a disabled placeholder for now.
+ * Share (SPEC.md sections 2.2 step 5, 4, 8.2): QR code for the bill link, copy link, native share
+ * sheet, and "Send in app" - username search (already merged, `UsernameSearch`) wired to the
+ * `invite_bill_member` RPC (M4 in-app-sending task). Selecting a result only calls the RPC; it
+ * doesn't update this screen's people list itself - the new `bill_people` row reaches it through
+ * the realtime subscription every bill screen already has via `useResolvedBill`, the same path
+ * any other change arrives through (confirmed against a real local Supabase stack, not assumed -
+ * see the migration's own comment).
  */
 import * as Clipboard from 'expo-clipboard';
 import { createURL } from 'expo-linking';
@@ -13,6 +17,7 @@ import { PrimaryButton, SecondaryButton } from '../../../../components/Buttons';
 import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
 import { SyncStatusBanner } from '../../../../components/SyncStatusBanner';
 import { useThemeTokens } from '../../../../components/useThemeTokens';
+import { UsernameSearch, type UsernameSearchResult } from '../../../../components/UsernameSearch';
 import { useBillStore } from '../../../../state/bill';
 import { useResolvedBill } from '../../../../state/useResolvedBill';
 
@@ -24,7 +29,9 @@ export default function ShareScreen() {
   // `s.bills[billId]` directly, with neither.
   const { bill, controlsDisabled, syncError, dismissSyncError, notSynced, retrySync } = useResolvedBill(billId);
   const markSent = useBillStore((s) => s.markSent);
+  const invitePerson = useBillStore((s) => s.invitePerson);
   const [copied, setCopied] = useState(false);
+  const [inviteStatus, setInviteStatus] = useState<{ username: string; state: 'sending' | 'sent' | 'error' } | null>(null);
 
   // `bill?.id` (the real, resolved id), not the raw route param: once the rekey fallback above
   // resolves a scan's draft bill to its real server id, the link must point at that id too.
@@ -52,6 +59,17 @@ export default function ShareScreen() {
     }
   };
 
+  const onInvite = async (user: UsernameSearchResult) => {
+    setInviteStatus({ username: user.username, state: 'sending' });
+    const error = await invitePerson(bill.id, user.id);
+    if (error) {
+      setInviteStatus({ username: user.username, state: 'error' });
+      return;
+    }
+    recordSent();
+    setInviteStatus({ username: user.username, state: 'sent' });
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <NoConnectionBanner />
@@ -75,7 +93,30 @@ export default function ShareScreen() {
       <View style={styles.actions}>
         <SecondaryButton testID="copy-link-button" label="Copy link" onPress={onCopy} disabled={controlsDisabled} />
         <SecondaryButton testID="share-link-button" label="Share link" onPress={onShare} disabled={controlsDisabled} />
-        <SecondaryButton testID="send-in-app-button" label="Send in app (coming soon)" onPress={() => {}} disabled />
+      </View>
+
+      <View testID="send-in-app-section" style={styles.inviteSection}>
+        <Text style={[styles.sectionLabel, { color: theme.text }]}>Send in app</Text>
+        {controlsDisabled ? (
+          <Text style={{ color: theme.textMuted }}>Reconnect to search and invite.</Text>
+        ) : (
+          <UsernameSearch onSelect={onInvite} />
+        )}
+        {inviteStatus?.state === 'sending' && (
+          <Text testID="invite-sending" style={{ color: theme.textMuted }}>
+            Inviting @{inviteStatus.username}…
+          </Text>
+        )}
+        {inviteStatus?.state === 'sent' && (
+          <Text testID="invite-confirmation" style={{ color: theme.success }}>
+            Invited @{inviteStatus.username}
+          </Text>
+        )}
+        {inviteStatus?.state === 'error' && (
+          <Text testID="invite-error" style={{ color: theme.danger }}>
+            Could not invite @{inviteStatus.username}. Try again.
+          </Text>
+        )}
       </View>
 
       <PrimaryButton
@@ -96,4 +137,6 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: '800', textAlign: 'center', marginBottom: 8 },
   qrWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
   actions: { gap: 10, marginTop: 16 },
+  inviteSection: { gap: 8, marginTop: 16 },
+  sectionLabel: { fontSize: 16, fontWeight: '700' },
 });
