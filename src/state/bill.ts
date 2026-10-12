@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import type { StoredBill } from '../data/localBillStore';
 import { getReceiptReader, type ImageCapture } from '../data/receiptReader';
-import { createSupabaseBillStore, fetchBillSnapshot, subscribeToBillChanges } from '../data/supabaseBillStore';
+import { createSupabaseBillStore, fetchBillSnapshot, inviteBillMember, subscribeToBillChanges } from '../data/supabaseBillStore';
 import { resolveClaims, type ClaimMode, type ResolvedItem } from '../lib/claims/resolve';
 import { calculateSplit, type Fee, type Person, type SplitResult, type Tip } from '../lib/split/split';
 import type { TipSource } from '../lib/receipt/schema';
@@ -55,6 +55,14 @@ export type BillState = {
   setTip: (billId: string, tip: Tip, source: TipSource | null) => void;
 
   addPerson: (billId: string, name: string) => string;
+  /**
+   * Invites a specific user, found via username search, as a real bill member (SPEC.md 8.2, M4
+   * in-app-sending task). Resolves to an error message on failure, or `null` on success - the
+   * caller (the share screen) doesn't need the new `bill_people` row itself: it reaches this
+   * store through the existing realtime subscription (`subscribeToBill`), the same path any other
+   * screen's own change arrives through.
+   */
+  invitePerson: (billId: string, userId: string) => Promise<string | null>;
   toggleMine: (billId: string, itemId: string, personId: string) => void;
   toggleShared: (billId: string, itemId: string, personId: string) => void;
 
@@ -231,6 +239,11 @@ export const useBillStore = create<BillState>((set, get) => {
       if (!snapshot) return;
       dataStore.replaceBill(snapshot); // see subscribeToBill's comment: dataStore is the source of truth
       refresh(billId);
+    },
+
+    invitePerson: async (billId, userId) => {
+      const { error } = await inviteBillMember(billId, userId);
+      return error;
     },
 
     addItem: (billId, item) => {

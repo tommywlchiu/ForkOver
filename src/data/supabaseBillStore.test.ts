@@ -6,10 +6,13 @@
  * unpromoted one stays local-only, same as `createLocalBillStore` always did.
  */
 import { supabase } from './supabaseClient';
-import { createDebouncedLatestFetcher, createSupabaseBillStore } from './supabaseBillStore';
+import { createDebouncedLatestFetcher, createSupabaseBillStore, inviteBillMember } from './supabaseBillStore';
 
 jest.mock('./supabaseClient');
-const { __resetFakeSupabase } = jest.requireMock('./supabaseClient') as { __resetFakeSupabase: () => void };
+const { __resetFakeSupabase, __seedProfile } = jest.requireMock('./supabaseClient') as {
+  __resetFakeSupabase: () => void;
+  __seedProfile: (id: string, profile: { username?: string | null; display_name?: string | null }) => void;
+};
 
 async function signIn(): Promise<string> {
   const { data } = await supabase.auth.setSession({ access_token: 'tok', refresh_token: 'tok' });
@@ -261,6 +264,30 @@ describe('createSupabaseBillStore', () => {
     const { data: peopleRows } = await supabase.from('bill_people').select('display_name').eq('bill_id', promoted.id);
     expect(peopleRows).toEqual(expect.arrayContaining([expect.objectContaining({ display_name: 'Bailey' })]));
     expect(promoted.claims).toEqual([{ itemId: item.id, personId: bailey.id, mode: 'mine', createdBy: promoted.payerId }]);
+  });
+
+  it('inviteBillMember adds a real member, is idempotent, and the invited row is readable by fetchSnapshot (what the realtime refetch reads)', async () => {
+    const userId = await signIn();
+    const store = createSupabaseBillStore();
+    const bill = store.createDraftBill({ id: userId, name: 'Alex' });
+    const promoted = await store.promoteBill(bill.id);
+
+    __seedProfile('friend-1', { username: 'baileyb', display_name: 'Bailey' });
+
+    const first = await inviteBillMember(promoted.id, 'friend-1');
+    expect(first.error).toBeNull();
+
+    const { data: peopleRows } = await supabase.from('bill_people').select('user_id,display_name,kind').eq('bill_id', promoted.id);
+    expect(peopleRows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ user_id: 'friend-1', display_name: 'Bailey', kind: 'member' })]),
+    );
+
+    // Calling it again for the same user doesn't create a second row (matches join_bill's own
+    // idempotent-return pattern, same as the pgTAP coverage for the real RPC).
+    const second = await inviteBillMember(promoted.id, 'friend-1');
+    expect(second.error).toBeNull();
+    const { data: afterSecondInvite } = await supabase.from('bill_people').select('id').eq('bill_id', promoted.id).eq('user_id', 'friend-1');
+    expect(afterSecondInvite).toHaveLength(1);
   });
 
   it("does not let an older, now-stale write's failure revert a newer write to the same field", async () => {

@@ -867,3 +867,25 @@ export function subscribeToBillChanges(billId: string, onSnapshot: (bill: Stored
 }
 
 export { fetchSnapshot as fetchBillSnapshot };
+
+/**
+ * Invites a specific, known user (one the payer chose from `search_usernames`'s results) as a
+ * real `kind = 'member'` bill_people row (SPEC.md 8.2, M4 in-app-sending task). Calls the
+ * `invite_bill_member` RPC (`supabase/migrations/20261011010000_invite_bill_member.sql`) - the
+ * only payer-only path that can carry a real `user_id`: `join_bill` only lets a caller add
+ * *themselves*, and the payer's own direct 'named'-row insert path is schema-blocked from ever
+ * carrying one (`bill_people_named_has_no_user`), specifically so a payer can't silently grant
+ * someone access without their consent.
+ *
+ * Only meaningful on an already-promoted (real) bill - the share screen this backs never renders
+ * before that. Doesn't touch the local cache itself: the new row reaches every subscribed screen,
+ * including the inviting payer's own, through the realtime subscription every bill screen already
+ * has via `useResolvedBill`/`subscribeToBillChanges` - `bill_people` is already in the
+ * `supabase_realtime` publication (SPEC 8.3) and a `security definer` RPC's insert fires that same
+ * replication stream like any other insert, confirmed against a real local Supabase stack rather
+ * than assumed.
+ */
+export async function inviteBillMember(billId: string, userId: string): Promise<{ error: string | null }> {
+  const { error } = await supabase.rpc('invite_bill_member', { p_bill_id: billId, p_user_id: userId });
+  return { error: error ? error.message : null };
+}
