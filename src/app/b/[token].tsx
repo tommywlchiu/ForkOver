@@ -22,7 +22,8 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Chip, PrimaryButton } from '../../components/Buttons';
+import { PrimaryButton } from '../../components/Buttons';
+import { ClaimableItemRow } from '../../components/ClaimableItemRow';
 import { NoConnectionBanner } from '../../components/NoConnectionBanner';
 import { SyncStatusBanner } from '../../components/SyncStatusBanner';
 import { useThemeTokens } from '../../components/useThemeTokens';
@@ -32,9 +33,9 @@ import {
   joinBillByToken,
   type JoinBillError,
 } from '../../data/supabaseBillStore';
+import { personDisplayName } from '../../lib/claims/displayName';
 import { buildVenmoPayLink } from '../../lib/pay/venmo';
 import { formatMoney } from '../../lib/money/format';
-import { claimStateMeta } from '../../lib/theme/tokens';
 import { analytics } from '../../state/analytics';
 import { useBillStore } from '../../state/bill';
 import { ensureSession, useSessionStore } from '../../state/session';
@@ -63,16 +64,26 @@ export default function ClaimLinkScreen() {
 
   const { bill, controlsDisabled, syncError, dismissSyncError, notSynced, retrySync } = useResolvedBill(billId ?? '');
 
-  async function attemptJoin(displayName: string) {
+  // `join_bill` itself requires 1-30 characters, but that check only belongs to the guest-typed
+  // name path (`submitGuestName` below validates there, inline, before calling this). The silent
+  // auto-join path (a signed-in member not yet on the bill) has no form to validate against - a
+  // profile display name over 30 characters would otherwise fail the exact same check and land
+  // that member on the guest-facing "What's your name?" prompt, contradicting SPEC 2.3 step 2
+  // ("guests only"). Clamping there instead of validating keeps this function free of any length
+  // check at all: both call sites already hand it something that fits.
+  function clampDisplayName(raw: string): string {
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed.slice(0, 30) : 'Member';
+  }
+
+  /** Calls `join_bill` and applies the result. `isCancelled` lets a caller (the mount effect,
+   *  below) bail out of setting state for a stale `token`/unmounted screen once the RPC resolves -
+   *  mirrors the cancellation guard the "already a member" branch right above it already has. */
+  async function joinWith(displayName: string, isCancelled: () => boolean = () => false) {
     if (!token) return;
-    const trimmed = displayName.trim();
-    if (trimmed.length < 1 || trimmed.length > 30) {
-      setJoinError('Enter a name, 1 to 30 characters.');
-      setPhase('name-prompt');
-      return;
-    }
     setPhase('joining');
-    const result = await joinBillByToken(token, trimmed);
+    const result = await joinBillByToken(token, displayName);
+    if (isCancelled()) return;
     if (!result.ok) {
       applyJoinError(result.error);
       return;
@@ -83,6 +94,18 @@ export default function ClaimLinkScreen() {
     setJoinError(null);
     setPhase('ready');
     analytics.record('claim_page_opened');
+  }
+
+  /** The guest "Join bill" button: the one call site that still needs the 1-30 character
+   *  validation (and an inline error) - see `clampDisplayName`'s doc above. */
+  function submitGuestName() {
+    const trimmed = name.trim();
+    if (trimmed.length < 1 || trimmed.length > 30) {
+      setJoinError('Enter a name, 1 to 30 characters.');
+      setPhase('name-prompt');
+      return;
+    }
+    void joinWith(trimmed);
   }
 
   function applyJoinError(error: JoinBillError) {
@@ -125,7 +148,8 @@ export default function ClaimLinkScreen() {
         // Signed-in, not yet a member: join silently with the caller's own profile name (SPEC
         // 2.3 step 2 - the name prompt is guest-only).
         const session = useSessionStore.getState();
-        await attemptJoin(session.displayName ?? session.username ?? 'Member');
+        const autoName = clampDisplayName(session.displayName ?? session.username ?? 'Member');
+        await joinWith(autoName, () => cancelled);
       } catch {
         if (!cancelled) setPhase('error');
       }
@@ -133,7 +157,7 @@ export default function ClaimLinkScreen() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- attemptJoin/loadBill are stable store actions; re-running this on every render would re-join on every keystroke elsewhere.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- joinWith/loadBill are stable per render and re-created identically each time; re-running this on every render would re-join on every keystroke elsewhere.
   }, [token]);
 
   if (phase === 'loading' || phase === 'joining') {
@@ -203,7 +227,7 @@ export default function ClaimLinkScreen() {
               {joinError}
             </Text>
           )}
-          <PrimaryButton testID="join-button" label="Join bill" onPress={() => attemptJoin(name)} />
+          <PrimaryButton testID="join-button" label="Join bill" onPress={submitGuestName} />
         </View>
       </View>
     );
@@ -222,7 +246,8 @@ export default function ClaimLinkScreen() {
   const resolvedItems = getResolvedItems(bill.id);
   const resolvedById = new Map(resolvedItems.map((r) => [r.itemId, r]));
   const peopleById = new Map(bill.people.map((p) => [p.id, p.name]));
-  const nameFor = (id: string) => (id === bill.payerId ? `${peopleById.get(id) ?? 'the payer'} (payer)` : peopleById.get(id) ?? id);
+  const nameFor = (id: string) =>
+    personDisplayName({ name: peopleById.get(id) ?? id, personId: id, payerId: bill.payerId, viewerPersonId: personId });
   const split = getSplit(bill.id);
   const myShare = split?.ok ? split.shares.find((s) => s.personId === personId) : undefined;
 
@@ -266,46 +291,22 @@ export default function ClaimLinkScreen() {
         {bill.items.map((item) => {
           const resolved = resolvedById.get(item.id);
           const state = resolved?.state ?? 'unclaimed';
-          const meta = claimStateMeta[state];
-          const holders = resolved && resolved.assignedTo.length > 0 ? resolved.assignedTo.map(nameFor).join(', ') : null;
+          const holdersLabel = resolved && resolved.assignedTo.length > 0 ? resolved.assignedTo.map(nameFor).join(', ') : null;
           const mode = claimFor(bill.id, item.id, personId);
-          const priceLabel = formatMoney(item.priceCents, bill.currency, 'en-US');
 
           return (
-            <View
+            <ClaimableItemRow
               key={item.id}
-              style={[styles.itemRow, { borderColor: theme.border }]}
-              accessibilityLabel={`${item.name}, ${priceLabel}, ${holders ? `claimed by ${holders}` : 'unclaimed'}`}
-            >
-              <View style={styles.itemInfo}>
-                <Text style={{ color: theme.text, fontWeight: '600' }}>{item.name}</Text>
-                <Text style={{ color: theme.textMuted }}>{priceLabel}</Text>
-                <Text style={{ color: theme.textMuted, fontSize: 13 }}>
-                  {meta.label}
-                  {holders ? `: ${holders}` : ''}
-                </Text>
-              </View>
-              {!isClosed && (
-                <>
-                  <Chip
-                    testID={`claim-item-${item.id}`}
-                    label="Mine"
-                    selected={mode === 'mine'}
-                    disabled={controlsDisabled}
-                    accessibilityLabel={`Claim ${item.name} as mine`}
-                    onPress={() => onToggleMine(item.id)}
-                  />
-                  <Chip
-                    testID={`share-item-${item.id}`}
-                    label="Share"
-                    selected={mode === 'shared'}
-                    disabled={controlsDisabled}
-                    accessibilityLabel={`Claim ${item.name} as shared`}
-                    onPress={() => onToggleShared(item.id)}
-                  />
-                </>
-              )}
-            </View>
+              item={item}
+              currency={bill.currency}
+              state={state}
+              holdersLabel={holdersLabel}
+              mode={mode}
+              disabled={controlsDisabled}
+              readOnly={isClosed}
+              onToggleMine={() => onToggleMine(item.id)}
+              onToggleShared={() => onToggleShared(item.id)}
+            />
           );
         })}
       </ScrollView>
@@ -373,8 +374,6 @@ const styles = StyleSheet.create({
   centeredTitle: { fontSize: 24, fontWeight: '800', marginBottom: 4, textAlign: 'center', width: '100%' },
   message: { fontSize: 16, textAlign: 'center', width: '100%' },
   sectionTitle: { fontSize: 18, fontWeight: '700', marginTop: 12, marginBottom: 8 },
-  itemRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 10 },
-  itemInfo: { flex: 1 },
   nameInput: { width: '100%', borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12, textAlign: 'center' },
   totalsCard: { borderTopWidth: 1, padding: 16, gap: 8 },
   totalsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

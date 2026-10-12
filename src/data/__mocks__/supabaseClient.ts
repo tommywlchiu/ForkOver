@@ -329,14 +329,18 @@ export const supabase = {
     }
 
     if (fn === 'join_bill') {
-      if (!currentSession) return { data: null, error: { message: 'join_bill requires a session (signed in or anonymous)' } };
+      // `code` mirrors the real `join_bill`'s distinct SQLSTATE per case (supabase/migrations/
+      // 20261012000000_join_bill_error_codes.sql) - `joinBillByToken` classifies by this, not by
+      // the message text, so the mock has to carry it too for that path to be exercised at all
+      // under jest (real RLS/errcodes only ever run against local Postgres otherwise).
+      if (!currentSession) return { data: null, error: { message: 'join_bill requires a session (signed in or anonymous)', code: 'FO001' } };
       const shareToken = String(args.p_share_token ?? '');
       const name = String(args.p_display_name ?? '').trim();
       const bill = [...billTables.bills.values()].find((row) => row.share_token === shareToken);
-      if (!bill) return { data: null, error: { message: 'no bill found for that share link' } };
-      if (bill.status === 'closed') return { data: null, error: { message: 'this bill is closed' } };
+      if (!bill) return { data: null, error: { message: 'no bill found for that share link', code: 'FO002' } };
+      if (bill.status === 'closed') return { data: null, error: { message: 'this bill is closed', code: 'FO003' } };
       if (name.length < 1 || name.length > 30) {
-        return { data: null, error: { message: 'display_name must be 1 to 30 characters' } };
+        return { data: null, error: { message: 'display_name must be 1 to 30 characters', code: 'FO004' } };
       }
       const existing = [...billTables.bill_people.values()].find(
         (row) => row.bill_id === bill.id && row.user_id === currentSession!.user.id,
@@ -354,8 +358,13 @@ export const supabase = {
     }
 
     if (fn === 'get_bill_payer_venmo') {
-      const billId = args.p_bill_id;
-      const bill = billTables.bills.get(billId as string);
+      const billId = args.p_bill_id as string;
+      // Mirrors the real RPC's `is_bill_member` gate (supabase/migrations/20261011010000_
+      // bill_payer_venmo.sql) - without this, a regression dropping that check server-side would
+      // only ever be caught by the separate pgTAP suite, not `npm test` (the `bills` select
+      // branch above was deliberately built to simulate this exact membership boundary already).
+      if (!isBillMember(billId, currentSession?.user.id)) return { data: null, error: null };
+      const bill = billTables.bills.get(billId);
       if (!bill) return { data: null, error: null };
       const payer = profiles.get(bill.payer_user_id as string);
       return { data: payer?.venmo_username ?? null, error: null };

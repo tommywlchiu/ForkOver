@@ -148,7 +148,19 @@ function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: Fe
  * `promoteBill`) already treat `null` as "couldn't confirm anything changed - leave the cache
  * alone" rather than erasing good local state.
  */
-async function fetchSnapshot(billId: string, previous: StoredBill | undefined): Promise<StoredBill | null> {
+/**
+ * `includeVenmo` defaults to `false`: `get_bill_payer_venmo` is a security-definer RPC with its
+ * own `profiles` join, and nothing on the payer's own screens (review/share/the live bill screen)
+ * ever reads `payerVenmoUsername` - only the public claim link does (SPEC 2.3 step 4). Every other
+ * caller of this function (`promoteBill`, realtime's `subscribeToBillChanges`, reconnect's
+ * `refetchBill`) would otherwise pay for that extra round trip on every refresh of every bill,
+ * payer included, for a field they never render. When it's skipped, `payerVenmoUsername` falls
+ * back to `previous` (same as a failed lookup, just below) rather than going to `null` - so a
+ * claim-link screen's own later realtime refreshes (which don't set `includeVenmo`) don't make
+ * the Pay button flicker away once the initial, explicit fetch already found it.
+ */
+async function fetchSnapshot(billId: string, previous: StoredBill | undefined, options?: { includeVenmo?: boolean }): Promise<StoredBill | null> {
+  const includeVenmo = options?.includeVenmo ?? false;
   const [billRes, peopleRes, itemsRes, feesRes, claimsRes, venmoRes] = await Promise.all([
     supabase.from('bills').select('id,status,title,merchant_name,currency,discount_cents,tax_cents,tip,sent_at,created_at,share_token').eq('id', billId).maybeSingle(),
     supabase.from('bill_people').select('id,user_id,display_name,kind').eq('bill_id', billId),
@@ -157,10 +169,12 @@ async function fetchSnapshot(billId: string, previous: StoredBill | undefined): 
     supabase.from('claims').select('item_id,person_id,mode,created_by').eq('bill_id', billId),
     // Best-effort: a missing/failed venmo lookup just means no "Pay on Venmo" button, not a
     // reason to fail the whole snapshot the way the other reads above do.
-    supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId }) as unknown as Promise<QueryResult<string | null>>,
+    includeVenmo
+      ? (supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId }) as unknown as Promise<QueryResult<string | null>>)
+      : Promise.resolve({ data: null, error: null, skipped: true } as QueryResult<string | null> & { skipped: true }),
   ]);
   if (billRes.error || !billRes.data || peopleRes.error || itemsRes.error || feesRes.error || claimsRes.error) return null;
-  const payerVenmoUsername = venmoRes.error ? null : (venmoRes.data ?? null);
+  const payerVenmoUsername = !includeVenmo || venmoRes.error ? (previous?.payerVenmoUsername ?? null) : (venmoRes.data ?? null);
   return assemble(
     billRes.data as BillRow,
     (peopleRes.data ?? []) as PersonRow[],
@@ -303,12 +317,16 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     replaceBill(bill) {
       set(bill);
-      // Every caller of `replaceBill` (realtime's `onSnapshot`, `refetchBill`, and the public
-      // claim route's own load, below) hands it a snapshot that already came from the server, so
-      // it's always safe - and necessary - to mark it promoted too: without this, a bill loaded
-      // straight from `fetchSnapshot` (never through `promoteBill`) would have every mutator
-      // below silently skip its network write (they all gate on `promotedIds.has(billId)`),
-      // leaving a guest's claim looking saved locally while never reaching the server.
+      // Every *current* caller of `replaceBill` (realtime's `onSnapshot`, `refetchBill`, and the
+      // public claim route's `loadBill`) hands it a snapshot that already came from the server,
+      // so it's always safe - and necessary - to mark it promoted too: without this, a bill
+      // loaded straight from `fetchSnapshot` (never through `promoteBill`) would have every
+      // mutator below silently skip its network write (they all gate on
+      // `promotedIds.has(billId)`), leaving a guest's claim looking saved locally while never
+      // reaching the server. This is a real assumption, not an incidental one: a future caller
+      // that hands this *local-only* data (never read back from Supabase) would wrongly flip that
+      // bill into "writes go to the network" mode. If one shows up, give it its own method rather
+      // than reusing this one silently.
       promotedIds.add(bill.id);
     },
 
@@ -926,11 +944,22 @@ export async function findOwnPersonId(billId: string, userId: string): Promise<s
 export async function fetchBillByShareTokenIfMember(token: string): Promise<StoredBill | null> {
   const { data, error } = await supabase.from('bills').select('id').eq('share_token', token).maybeSingle();
   if (error || !data) return null;
-  return fetchSnapshot((data as { id: string }).id, undefined);
+  // `includeVenmo: true` - this is one of the two places a bill actually reaches the public claim
+  // screen (fetchSnapshot's own doc explains why that's opt-in, not every caller's default).
+  return fetchSnapshot((data as { id: string }).id, undefined, { includeVenmo: true });
 }
 
 export type JoinBillError = { reason: 'not_found' | 'closed' | 'invalid_name' | 'error'; message: string };
 export type JoinBillOutcome = { ok: true; personId: string; bill: StoredBill } | { ok: false; error: JoinBillError };
+
+/** `join_bill`'s own distinct SQLSTATE per failure case (supabase/migrations/20261012000000_
+ *  join_bill_error_codes.sql) - matched here instead of substring-matching the exception message,
+ *  so a future wording change to that function can't silently stop being classified correctly. */
+const JOIN_BILL_ERROR_CODES: Record<string, JoinBillError['reason']> = {
+  FO002: 'not_found',
+  FO003: 'closed',
+  FO004: 'invalid_name',
+};
 
 /**
  * Calls `join_bill` for a caller not yet known to be a member (`fetchBillByShareTokenIfMember`
@@ -944,17 +973,12 @@ export async function joinBillByToken(token: string, displayName: string): Promi
   const { data, error } = await supabase.rpc('join_bill', { p_share_token: token, p_display_name: displayName });
   if (error || !data) {
     const message = error?.message ?? 'Could not join this bill.';
-    const reason: JoinBillError['reason'] = message.includes('no bill found')
-      ? 'not_found'
-      : message.includes('is closed')
-        ? 'closed'
-        : message.includes('1 to 30 characters')
-          ? 'invalid_name'
-          : 'error';
+    const reason = (error && JOIN_BILL_ERROR_CODES[error.code ?? '']) || 'error';
     return { ok: false, error: { reason, message } };
   }
   const person = data as { id: string; bill_id: string };
-  const bill = await fetchSnapshot(person.bill_id, undefined);
+  // `includeVenmo: true` - see fetchBillByShareTokenIfMember's comment just above.
+  const bill = await fetchSnapshot(person.bill_id, undefined, { includeVenmo: true });
   if (!bill) {
     return { ok: false, error: { reason: 'error', message: "Joined, but couldn't load the bill. Try again." } };
   }

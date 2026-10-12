@@ -9,11 +9,12 @@ import { Redirect, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Chip } from '../../../../components/Buttons';
+import { ClaimableItemRow } from '../../../../components/ClaimableItemRow';
 import { NoConnectionBanner } from '../../../../components/NoConnectionBanner';
 import { SyncStatusBanner } from '../../../../components/SyncStatusBanner';
 import { useThemeTokens } from '../../../../components/useThemeTokens';
+import { personDisplayName } from '../../../../lib/claims/displayName';
 import { formatMoney } from '../../../../lib/money/format';
-import { claimStateMeta } from '../../../../lib/theme/tokens';
 import { useBillStore } from '../../../../state/bill';
 import { useResolvedBill } from '../../../../state/useResolvedBill';
 
@@ -45,7 +46,11 @@ export default function BillScreen() {
   const selectedPersonId = activePersonId ?? bill.payerId;
   const peopleById = new Map(bill.people.map((p) => [p.id, p.name]));
 
-  const nameFor = (id: string) => (id === bill.payerId ? `${peopleById.get(id)} (you)` : (peopleById.get(id) ?? id));
+  // The viewer here is always the payer (this screen is payer-only, SPEC 2.4) - not necessarily
+  // `selectedPersonId`, which is just whichever person the payer is currently claiming on behalf
+  // of (FR-32).
+  const nameFor = (id: string) =>
+    personDisplayName({ name: peopleById.get(id) ?? id, personId: id, payerId: bill.payerId, viewerPersonId: bill.payerId });
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
@@ -112,42 +117,21 @@ export default function BillScreen() {
       {bill.items.map((item) => {
         const resolved = resolvedById.get(item.id);
         const state = resolved?.state ?? 'unclaimed';
-        const meta = claimStateMeta[state];
-        const holders = resolved && resolved.assignedTo.length > 0 ? resolved.assignedTo.map(nameFor).join(', ') : null;
+        const holdersLabel = resolved && resolved.assignedTo.length > 0 ? resolved.assignedTo.map(nameFor).join(', ') : null;
         const mode = claimFor(bill.id, item.id, selectedPersonId);
-        const priceLabel = formatMoney(item.priceCents, bill.currency, 'en-US');
 
         return (
-          <View
+          <ClaimableItemRow
             key={item.id}
-            style={[styles.itemRow, { borderColor: theme.border }]}
-            accessibilityLabel={`${item.name}, ${priceLabel}, ${holders ? `claimed by ${holders}` : 'unclaimed'}`}
-          >
-            <View style={styles.itemInfo}>
-              <Text style={{ color: theme.text, fontWeight: '600' }}>{item.name}</Text>
-              <Text style={{ color: theme.textMuted }}>{priceLabel}</Text>
-              <Text style={{ color: theme.textMuted, fontSize: 13 }}>
-                {meta.label}
-                {holders ? `: ${holders}` : ''}
-              </Text>
-            </View>
-            <Chip
-              testID={`claim-item-${item.id}`}
-              label="Mine"
-              selected={mode === 'mine'}
-              disabled={controlsDisabled}
-              accessibilityLabel={`Claim ${item.name} as mine`}
-              onPress={() => toggleMine(bill.id, item.id, selectedPersonId)}
-            />
-            <Chip
-              testID={`share-item-${item.id}`}
-              label="Share"
-              selected={mode === 'shared'}
-              disabled={controlsDisabled}
-              accessibilityLabel={`Claim ${item.name} as shared`}
-              onPress={() => toggleShared(bill.id, item.id, selectedPersonId)}
-            />
-          </View>
+            item={item}
+            currency={bill.currency}
+            state={state}
+            holdersLabel={holdersLabel}
+            mode={mode}
+            disabled={controlsDisabled}
+            onToggleMine={() => toggleMine(bill.id, item.id, selectedPersonId)}
+            onToggleShared={() => toggleShared(bill.id, item.id, selectedPersonId)}
+          />
         );
       })}
 
@@ -186,7 +170,5 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: '700', marginTop: 20, marginBottom: 8 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   nameInput: { flex: 1, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
-  itemRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 10 },
-  itemInfo: { flex: 1 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
 });

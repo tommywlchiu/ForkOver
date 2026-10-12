@@ -143,7 +143,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 }));
 
 function applySession(session: Session | null) {
-  if (!session?.user) {
+  // An anonymous session (a guest from `ensureSession` below, SPEC 3) is not a real sign-in: the
+  // main app's `(app)/_layout.tsx` gate checks `isSignedIn` to decide whether to show sign-in or
+  // skip straight to username onboarding. Without this check, a guest who later opens the main
+  // app on the same device (the session persists) would skip the real sign-in screen entirely and
+  // could create a profile on a throwaway anonymous identity.
+  if (!session?.user || session.user.is_anonymous) {
     useSessionStore.setState({ ...SIGNED_OUT_FIELDS });
     return;
   }

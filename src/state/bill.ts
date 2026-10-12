@@ -298,16 +298,27 @@ export const useBillStore = create<BillState>((set, get) => {
       const bill = get().bills[billId];
       if (!bill) return;
       const existing = bill.claims.find((c) => c.itemId === itemId && c.personId === personId);
+      // `created_by` is the person claiming for themselves here - both current callers (the payer
+      // tapping their own bill screen, and `b/[token].tsx`'s guest/member tapping "Mine" for
+      // themselves) always have `personId` acting for its own `bill_people` row. Hardcoding
+      // `bill.payerId` here used to be a no-op for the payer's own taps (the only caller before
+      // this screen existed) but silently broke every non-payer claim: `guard_claim_change` (the
+      // DB trigger, SPEC 8.2) requires `created_by`'s `user_id` to match the caller's `auth.uid()`
+      // or the caller to be the payer - a guest/member is neither, so the write was rejected
+      // outright. "Claim for anyone" (FR-32, the payer claiming on another person's behalf) is
+      // M5 and isn't built yet; it will need its own explicit path that passes the payer's id on
+      // purpose, not this implicit default.
       if (existing?.mode === 'mine') dataStore.clearClaim(billId, itemId, personId);
-      else dataStore.setClaim(billId, itemId, personId, 'mine', bill.payerId);
+      else dataStore.setClaim(billId, itemId, personId, 'mine', personId);
       refresh(billId);
     },
     toggleShared: (billId, itemId, personId) => {
       const bill = get().bills[billId];
       if (!bill) return;
       const existing = bill.claims.find((c) => c.itemId === itemId && c.personId === personId);
+      // See toggleMine's comment just above - same fix, same reason.
       if (existing?.mode === 'shared') dataStore.clearClaim(billId, itemId, personId);
-      else dataStore.setClaim(billId, itemId, personId, 'shared', bill.payerId);
+      else dataStore.setClaim(billId, itemId, personId, 'shared', personId);
       refresh(billId);
     },
 
