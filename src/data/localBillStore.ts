@@ -28,6 +28,15 @@ export type StoredBill = {
   merchantName: string | null;
   currency: string;
   payerId: string;
+  /**
+   * The public link's token (SPEC 8.1 `bills.share_token`): null until the bill is promoted to a
+   * real server row (`share.tsx`'s link, and the public `b/[token]` route's own lookup, both key
+   * off this rather than `id`, which `join_bill` never accepts - see supabaseBillStore.ts).
+   */
+  shareToken: string | null;
+  /** The payer's Venmo username, for the "Pay on Venmo" button (SPEC 2.3 step 4, 6.6). Null if
+   *  they haven't set one, or (same as `shareToken`) before the bill is promoted. */
+  payerVenmoUsername: string | null;
   people: StoredPerson[];
   items: StoredItem[];
   discountCents: number;
@@ -133,6 +142,8 @@ export function createLocalBillStore(): BillStore {
         merchantName: null,
         currency: 'USD',
         payerId: payer.id,
+        shareToken: null,
+        payerVenmoUsername: null,
         people: [{ id: payer.id, name: payer.name, kind: 'payer' }],
         items: [],
         discountCents: 0,

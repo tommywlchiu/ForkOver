@@ -83,14 +83,19 @@ type BillRow = {
   tip: unknown;
   sent_at: string | null;
   created_at: string;
+  share_token: string;
 };
 type PersonRow = { id: string; user_id: string | null; display_name: string; kind: string };
 type ItemRow = { id: string; name: string; price_cents: number; position: number };
 type FeeRow = { id: string; label: string; cents: number; split: 'proportional' | 'equal' };
 type ClaimRow = { item_id: string; person_id: string; mode: ClaimMode; created_by: string };
 
-/** Builds a `StoredBill` from a full server-side snapshot of one bill's rows. */
-function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: FeeRow[], claims: ClaimRow[], previous: StoredBill | undefined): StoredBill {
+/** Builds a `StoredBill` from a full server-side snapshot of one bill's rows. `payerVenmoUsername`
+ *  comes from `get_bill_payer_venmo` (SPEC 6.6), a security-definer RPC - `profiles` itself only
+ *  lets a user read their own row (`profiles_select_own`), so a claimant can't select the payer's
+ *  profile directly to build the "Pay on Venmo" button (fetchSnapshot below calls it alongside
+ *  the other reads). */
+function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: FeeRow[], claims: ClaimRow[], payerVenmoUsername: string | null, previous: StoredBill | undefined): StoredBill {
   const payer = people.find((p) => p.kind === 'payer');
   return {
     id: bill.id,
@@ -98,6 +103,8 @@ function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: Fe
     title: bill.title ?? previous?.title ?? 'New bill',
     merchantName: bill.merchant_name,
     currency: bill.currency,
+    shareToken: bill.share_token,
+    payerVenmoUsername,
     // `payer` should always be found - `handle_new_bill` gives every bill a payer `bill_people`
     // row the instant it's created, and `fetchSnapshot` below already refuses to call this at all
     // if the `bill_people` read itself errored. Falling back to `previous?.payerId` (the raw auth
@@ -142,15 +149,27 @@ function assemble(bill: BillRow, people: PersonRow[], items: ItemRow[], fees: Fe
  * alone" rather than erasing good local state.
  */
 async function fetchSnapshot(billId: string, previous: StoredBill | undefined): Promise<StoredBill | null> {
-  const [billRes, peopleRes, itemsRes, feesRes, claimsRes] = await Promise.all([
-    supabase.from('bills').select('id,status,title,merchant_name,currency,discount_cents,tax_cents,tip,sent_at,created_at').eq('id', billId).maybeSingle(),
+  const [billRes, peopleRes, itemsRes, feesRes, claimsRes, venmoRes] = await Promise.all([
+    supabase.from('bills').select('id,status,title,merchant_name,currency,discount_cents,tax_cents,tip,sent_at,created_at,share_token').eq('id', billId).maybeSingle(),
     supabase.from('bill_people').select('id,user_id,display_name,kind').eq('bill_id', billId),
     supabase.from('bill_items').select('id,name,price_cents,position').eq('bill_id', billId),
     supabase.from('bill_fees').select('id,label,cents,split').eq('bill_id', billId),
     supabase.from('claims').select('item_id,person_id,mode,created_by').eq('bill_id', billId),
+    // Best-effort: a missing/failed venmo lookup just means no "Pay on Venmo" button, not a
+    // reason to fail the whole snapshot the way the other reads above do.
+    supabase.rpc('get_bill_payer_venmo', { p_bill_id: billId }) as Promise<QueryResult<string | null>>,
   ]);
   if (billRes.error || !billRes.data || peopleRes.error || itemsRes.error || feesRes.error || claimsRes.error) return null;
-  return assemble(billRes.data as BillRow, (peopleRes.data ?? []) as PersonRow[], (itemsRes.data ?? []) as ItemRow[], (feesRes.data ?? []) as FeeRow[], (claimsRes.data ?? []) as ClaimRow[], previous);
+  const payerVenmoUsername = venmoRes.error ? null : (venmoRes.data ?? null);
+  return assemble(
+    billRes.data as BillRow,
+    (peopleRes.data ?? []) as PersonRow[],
+    (itemsRes.data ?? []) as ItemRow[],
+    (feesRes.data ?? []) as FeeRow[],
+    (claimsRes.data ?? []) as ClaimRow[],
+    payerVenmoUsername,
+    previous,
+  );
 }
 
 /** A `BillStore` backed by Supabase. See the module doc for the two M4 gaps this closes. */
@@ -257,6 +276,8 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
         merchantName: null,
         currency: 'USD',
         payerId: payer.id,
+        shareToken: null,
+        payerVenmoUsername: null,
         people: [{ id: payer.id, name: payer.name, kind: 'payer' }],
         items: [],
         discountCents: 0,
@@ -282,6 +303,13 @@ export function createSupabaseBillStore(onSyncError?: (billId: string, message: 
 
     replaceBill(bill) {
       set(bill);
+      // Every caller of `replaceBill` (realtime's `onSnapshot`, `refetchBill`, and the public
+      // claim route's own load, below) hands it a snapshot that already came from the server, so
+      // it's always safe - and necessary - to mark it promoted too: without this, a bill loaded
+      // straight from `fetchSnapshot` (never through `promoteBill`) would have every mutator
+      // below silently skip its network write (they all gate on `promotedIds.has(billId)`),
+      // leaving a guest's claim looking saved locally while never reaching the server.
+      promotedIds.add(bill.id);
     },
 
     beginScan(billId) {
@@ -867,3 +895,68 @@ export function subscribeToBillChanges(billId: string, onSnapshot: (bill: Stored
 }
 
 export { fetchSnapshot as fetchBillSnapshot };
+
+// --- Public bill link (SPEC 2.3, 4 `b/[token]`) -------------------------------------------------
+//
+// `join_bill(share_token, display_name)` (supabase/migrations/20261010090100_shared_bills_rls.sql)
+// is the only way to resolve a `share_token` to a bill id for someone who isn't a member yet - it
+// is `security definer` specifically so it can read `bills` by token before RLS would otherwise
+// allow it. But it unconditionally rejects a closed bill, even for an already-existing member
+// (its own status check runs before the "return the existing row" idempotency check), so it is
+// never called for someone who might already be a member: `fetchBillByShareTokenIfMember` tries
+// the plain, RLS-gated path first (works for an existing member on a bill of any status,
+// including closed - matching SPEC 8.5 "closed bills are read-only ... the web link shows a
+// summary"), and only when that comes back empty does the caller fall through to `joinBillByToken`.
+
+/** The caller's own `bill_people` row on `billId`, if any - used right after
+ *  `fetchBillByShareTokenIfMember` finds a bill the caller can already read, to know which person
+ *  they're claiming as (SPEC 2.3's claim UI always acts for "self", never "claim for anyone" -
+ *  that's a payer-only M5 control). */
+export async function findOwnPersonId(billId: string, userId: string): Promise<string | null> {
+  const { data, error } = await supabase.from('bill_people').select('id').eq('bill_id', billId).eq('user_id', userId).maybeSingle();
+  if (error || !data) return null;
+  return (data as { id: string }).id;
+}
+
+/** Resolves a share token to a full bill snapshot, but only if the caller is already a member
+ *  (RLS does the actual check - this just reads `bills` by `share_token` instead of `id`). Returns
+ *  `null` either because the token doesn't exist or because the caller isn't a member yet; the
+ *  caller can't tell which from this alone (RLS returns an empty result either way), which is why
+ *  the guest/member join path below exists to tell the two apart. */
+export async function fetchBillByShareTokenIfMember(token: string): Promise<StoredBill | null> {
+  const { data, error } = await supabase.from('bills').select('id').eq('share_token', token).maybeSingle();
+  if (error || !data) return null;
+  return fetchSnapshot((data as { id: string }).id, undefined);
+}
+
+export type JoinBillError = { reason: 'not_found' | 'closed' | 'invalid_name' | 'error'; message: string };
+export type JoinBillOutcome = { ok: true; personId: string; bill: StoredBill } | { ok: false; error: JoinBillError };
+
+/**
+ * Calls `join_bill` for a caller not yet known to be a member (`fetchBillByShareTokenIfMember`
+ * came back empty) - signed-in or anonymous, guest or returning member, per the RPC's own
+ * idempotency (SPEC 8.2 "Joining"). `displayName` is required by the RPC regardless of who's
+ * calling; the caller (the `b/[token]` screen) is the one that decides whether to prompt for it
+ * (guests) or supply the signed-in caller's own profile name silently (members) - see SPEC 2.3
+ * step 2, which is explicit that only guests see the name prompt.
+ */
+export async function joinBillByToken(token: string, displayName: string): Promise<JoinBillOutcome> {
+  const { data, error } = await supabase.rpc('join_bill', { p_share_token: token, p_display_name: displayName });
+  if (error || !data) {
+    const message = error?.message ?? 'Could not join this bill.';
+    const reason: JoinBillError['reason'] = message.includes('no bill found')
+      ? 'not_found'
+      : message.includes('is closed')
+        ? 'closed'
+        : message.includes('1 to 30 characters')
+          ? 'invalid_name'
+          : 'error';
+    return { ok: false, error: { reason, message } };
+  }
+  const person = data as { id: string; bill_id: string };
+  const bill = await fetchSnapshot(person.bill_id, undefined);
+  if (!bill) {
+    return { ok: false, error: { reason: 'error', message: "Joined, but couldn't load the bill. Try again." } };
+  }
+  return { ok: true, personId: person.id, bill };
+}

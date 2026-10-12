@@ -170,3 +170,23 @@ supabase.auth.getSession().then(({ data }) => applySession(data.session));
 supabase.auth.onAuthStateChange((_event, session) => applySession(session));
 
 export const FREE_SCANS_PER_MONTH = 3;
+
+/**
+ * Ensures there is a session - any session - before a public `b/[token]` screen calls `join_bill`
+ * (SPEC 8.2), which raises without one (`auth.uid()` must be set). Checks for an existing session
+ * first (signed in, or a previous visit's anonymous one - Supabase's own session persistence,
+ * `expo-sqlite`'s `localStorage` polyfill per supabaseClient.ts, already keeps a guest's anonymous
+ * session across reopening the link, so this never creates a second one for the same browser/app
+ * install) before minting a brand new anonymous session (SPEC 3 "anonymous sessions for guests").
+ * Returns the resulting user id and whether that session is anonymous (an already-signed-in
+ * member skips the name prompt; a guest, anonymous or not yet seen, gets one - SPEC 2.3 step 2).
+ */
+export async function ensureSession(): Promise<{ userId: string; isAnonymous: boolean }> {
+  const { data } = await supabase.auth.getSession();
+  if (data.session?.user) {
+    return { userId: data.session.user.id, isAnonymous: !!data.session.user.is_anonymous };
+  }
+  const { data: anon, error } = await supabase.auth.signInAnonymously();
+  if (error || !anon.user) throw new Error(error?.message ?? 'Could not start a session.');
+  return { userId: anon.user.id, isAnonymous: true };
+}

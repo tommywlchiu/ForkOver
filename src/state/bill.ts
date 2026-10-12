@@ -41,6 +41,14 @@ export type BillState = {
   subscribeToBill: (billId: string) => () => void;
   /** Refetches the full bill snapshot from Supabase (SPEC 8.3's reconnect behavior). */
   refetchBill: (billId: string) => Promise<void>;
+  /**
+   * Hydrates the store with a bill snapshot fetched some other way than the usual
+   * draft-bill-then-promote flow (SPEC.md section 4, `b/[token]`) - the public claim route's own
+   * `joinBillByToken`/`fetchBillByShareTokenIfMember` already return a full `StoredBill`, so this
+   * is the one call that makes `useResolvedBill` (and everything built on it: offline gating,
+   * realtime, the sync banners) work for that screen too, the same as every other bill screen.
+   */
+  loadBill: (bill: StoredBill) => void;
 
   addItem: (billId: string, item: { name: string; priceCents: number }) => void;
   updateItem: (billId: string, itemId: string, patch: Partial<{ name: string; priceCents: number }>) => void;
@@ -231,6 +239,11 @@ export const useBillStore = create<BillState>((set, get) => {
       if (!snapshot) return;
       dataStore.replaceBill(snapshot); // see subscribeToBill's comment: dataStore is the source of truth
       refresh(billId);
+    },
+
+    loadBill: (bill) => {
+      dataStore.replaceBill(bill); // same one-way flow as subscribeToBill/refetchBill above
+      refresh(bill.id);
     },
 
     addItem: (billId, item) => {

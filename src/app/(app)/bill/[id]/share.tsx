@@ -26,9 +26,11 @@ export default function ShareScreen() {
   const markSent = useBillStore((s) => s.markSent);
   const [copied, setCopied] = useState(false);
 
-  // `bill?.id` (the real, resolved id), not the raw route param: once the rekey fallback above
-  // resolves a scan's draft bill to its real server id, the link must point at that id too.
-  const link = useMemo(() => createURL(`b/${bill?.id ?? billId}`), [bill?.id, billId]);
+  // `join_bill` (the public claim route's own entry point, `b/[token].tsx`) resolves a
+  // `share_token`, not a bill id - using `bill.id` here used to mint a link that route could never
+  // actually open. `shareToken` is only ever null before the bill is promoted (supabaseBillStore.ts
+  // `assemble()`), which `bill` already can't be once this screen has one to render at all.
+  const link = useMemo(() => (bill?.shareToken ? createURL(`b/${bill.shareToken}`) : null), [bill?.shareToken]);
 
   if (!bill) return <Redirect href="/" />;
 
@@ -37,6 +39,7 @@ export default function ShareScreen() {
   };
 
   const onCopy = async () => {
+    if (!link) return;
     await Clipboard.setStringAsync(link);
     recordSent();
     setCopied(true);
@@ -44,6 +47,7 @@ export default function ShareScreen() {
   };
 
   const onShare = async () => {
+    if (!link) return;
     try {
       await RNShare.share({ message: link });
       recordSent();
@@ -59,13 +63,21 @@ export default function ShareScreen() {
 
       <Text style={[styles.title, { color: theme.text }]}>Share this bill</Text>
 
-      <View testID="qr-code" style={styles.qrWrap} accessibilityLabel="QR code for the bill link">
-        <QRCode value={link} size={220} />
-      </View>
+      {link ? (
+        <>
+          <View testID="qr-code" style={styles.qrWrap} accessibilityLabel="QR code for the bill link">
+            <QRCode value={link} size={220} />
+          </View>
 
-      <Text style={{ color: theme.textMuted, textAlign: 'center' }} numberOfLines={1}>
-        {link}
-      </Text>
+          <Text style={{ color: theme.textMuted, textAlign: 'center' }} numberOfLines={1}>
+            {link}
+          </Text>
+        </>
+      ) : (
+        <Text testID="share-link-pending" style={{ color: theme.textMuted, textAlign: 'center', paddingVertical: 16 }}>
+          Saving this bill before it can be shared...
+        </Text>
+      )}
       {copied && (
         <Text testID="copy-confirmation" style={{ color: theme.success, textAlign: 'center' }}>
           Link copied
@@ -73,8 +85,8 @@ export default function ShareScreen() {
       )}
 
       <View style={styles.actions}>
-        <SecondaryButton testID="copy-link-button" label="Copy link" onPress={onCopy} disabled={controlsDisabled} />
-        <SecondaryButton testID="share-link-button" label="Share link" onPress={onShare} disabled={controlsDisabled} />
+        <SecondaryButton testID="copy-link-button" label="Copy link" onPress={onCopy} disabled={controlsDisabled || !link} />
+        <SecondaryButton testID="share-link-button" label="Share link" onPress={onShare} disabled={controlsDisabled || !link} />
         <SecondaryButton testID="send-in-app-button" label="Send in app (coming soon)" onPress={() => {}} disabled />
       </View>
 
