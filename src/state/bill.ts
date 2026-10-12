@@ -60,9 +60,10 @@ export type BillState = {
    * in-app-sending task). Resolves to an error message on failure, or `null` on success - the
    * caller (the share screen) doesn't need the new `bill_people` row itself: it reaches this
    * store through the existing realtime subscription (`subscribeToBill`), the same path any other
-   * screen's own change arrives through.
+   * screen's own change arrives through. `alreadyMember` is true when the invited user already
+   * had a row on this bill - nothing new happened, so the caller shouldn't report a fresh invite.
    */
-  invitePerson: (billId: string, userId: string) => Promise<string | null>;
+  invitePerson: (billId: string, userId: string) => Promise<{ error: string | null; alreadyMember: boolean }>;
   toggleMine: (billId: string, itemId: string, personId: string) => void;
   toggleShared: (billId: string, itemId: string, personId: string) => void;
 
@@ -242,8 +243,7 @@ export const useBillStore = create<BillState>((set, get) => {
     },
 
     invitePerson: async (billId, userId) => {
-      const { error } = await inviteBillMember(billId, userId);
-      return error;
+      return inviteBillMember(billId, userId);
     },
 
     addItem: (billId, item) => {
