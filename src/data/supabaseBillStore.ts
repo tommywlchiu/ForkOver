@@ -899,11 +899,20 @@ export { fetchSnapshot as fetchBillSnapshot };
  * one row - `data?.[0]`, not `data` itself. Wrapped in try/catch (every other async handler in the
  * share screen is) so a network-layer failure that rejects instead of resolving with `{ error }`
  * still surfaces as a message instead of leaving the caller's "inviting..." state stuck forever.
+ *
+ * The RPC's own `on conflict (bill_id, user_id) do nothing` is what actually makes a concurrent
+ * double-invite safe (two devices, a retry racing the first attempt, or an invite racing that
+ * same person's own `join_bill` call) - but a bare Postgres `23505` (unique_violation) is treated
+ * as `alreadyMember: true` too, belt-and-suspenders, the same way `session.ts`'s `setUsername`
+ * already treats its own unique violation as "taken" rather than a generic failure.
  */
 export async function inviteBillMember(billId: string, userId: string): Promise<{ error: string | null; alreadyMember: boolean }> {
   try {
     const { data, error } = await supabase.rpc('invite_bill_member', { p_bill_id: billId, p_user_id: userId });
-    if (error) return { error: error.message, alreadyMember: false };
+    if (error) {
+      if (error.code === '23505') return { error: null, alreadyMember: true };
+      return { error: error.message, alreadyMember: false };
+    }
     const row = (Array.isArray(data) ? data[0] : data) as { already_member?: boolean } | null;
     return { error: null, alreadyMember: !!row?.already_member };
   } catch (err) {

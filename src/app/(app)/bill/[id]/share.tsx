@@ -69,7 +69,13 @@ export default function ShareScreen() {
   const inviteBlocked = controlsDisabled || notSynced;
 
   const recordSent = () => {
-    if (bill.sentAt === null) markSent(bill.id);
+    // Reads `sentAt` fresh from the store rather than the `bill` captured in this render's
+    // closure (code review): two different invites tapped before either RPC resolves would
+    // otherwise both still see the pre-invite `sentAt === null` from that one stale snapshot,
+    // and both call `markSent` - harmless (last write wins) but redundant. Every other caller of
+    // `recordSent` resolves synchronously, so this race is only reachable through the async
+    // invite path this PR adds.
+    if (useBillStore.getState().bills[bill.id]?.sentAt === null) markSent(bill.id);
   };
 
   const onCopy = async () => {

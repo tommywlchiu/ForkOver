@@ -73,23 +73,36 @@ begin
     raise exception 'invite_bill_member: no profile found for user %', p_user_id;
   end if;
 
-  select * into v_existing from public.bill_people bp
-  where bp.bill_id = p_bill_id and bp.user_id = p_user_id;
+  -- `join_bill`'s own safe shape, not a plain check-then-insert (code review): two concurrent
+  -- invites of the same person (two devices, a retry racing the first attempt, or an invite
+  -- racing that person's own `join_bill` call) would otherwise both pass a "not already a
+  -- member" check and then race each other into `bill_people`'s `unique (bill_id, user_id)`,
+  -- with the loser raising a raw `unique_violation` instead of returning `already_member: true`.
+  -- `on conflict ... do nothing` makes the insert itself the atomic check. Targets the unique
+  -- constraint by name (`bill_people_bill_id_user_id_key`), not an inline `(bill_id, user_id)`
+  -- column list: this function's own `returns table` columns are named `bill_id`/`user_id` too,
+  -- which plpgsql resolves as those OUT variables instead of the inserted row's columns, making
+  -- an inline list ambiguous.
+  insert into public.bill_people (bill_id, user_id, display_name, kind)
+  values (p_bill_id, p_user_id, coalesce(v_profile.display_name, v_profile.username, 'Invited member'), 'member')
+  on conflict on constraint bill_people_bill_id_user_id_key do nothing
+  returning * into v_person;
 
-  if v_existing.id is not null then
+  if v_person.id is not null then
     return query select
-      v_existing.id, v_existing.bill_id, v_existing.user_id, v_existing.display_name,
-      v_existing.kind, v_existing.joined_at, true;
+      v_person.id, v_person.bill_id, v_person.user_id, v_person.display_name,
+      v_person.kind, v_person.joined_at, false;
     return;
   end if;
 
-  insert into public.bill_people (bill_id, user_id, display_name, kind)
-  values (p_bill_id, p_user_id, coalesce(v_profile.display_name, v_profile.username, 'Invited member'), 'member')
-  returning * into v_person;
+  -- The insert hit the conflict (already a member, by this call or a concurrent one) - report
+  -- the existing row as `already_member: true` rather than erroring.
+  select * into v_existing from public.bill_people bp
+  where bp.bill_id = p_bill_id and bp.user_id = p_user_id;
 
   return query select
-    v_person.id, v_person.bill_id, v_person.user_id, v_person.display_name,
-    v_person.kind, v_person.joined_at, false;
+    v_existing.id, v_existing.bill_id, v_existing.user_id, v_existing.display_name,
+    v_existing.kind, v_existing.joined_at, true;
 end;
 $$;
 
