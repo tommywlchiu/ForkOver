@@ -147,9 +147,11 @@ export default function ClaimLinkScreen() {
   if (phase === 'not-found') {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <Text testID="bill-not-found" style={[styles.message, { color: theme.text }]}>
-          This link isn&apos;t valid. Double-check it with whoever sent it.
-        </Text>
+        <View style={styles.centeredBox}>
+          <Text testID="bill-not-found" style={[styles.message, { color: theme.text }]}>
+            This link isn&apos;t valid. Double-check it with whoever sent it.
+          </Text>
+        </View>
       </View>
     );
   }
@@ -157,9 +159,11 @@ export default function ClaimLinkScreen() {
   if (phase === 'closed-unavailable') {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <Text testID="bill-closed-unavailable" style={[styles.message, { color: theme.text }]}>
-          This bill is closed, and you weren&apos;t one of the people on it.
-        </Text>
+        <View style={styles.centeredBox}>
+          <Text testID="bill-closed-unavailable" style={[styles.message, { color: theme.text }]}>
+            This bill is closed, and you weren&apos;t one of the people on it.
+          </Text>
+        </View>
       </View>
     );
   }
@@ -167,9 +171,11 @@ export default function ClaimLinkScreen() {
   if (phase === 'error') {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <Text testID="claim-link-error" style={[styles.message, { color: theme.danger }]}>
-          Something went wrong opening this bill. Try again.
-        </Text>
+        <View style={styles.centeredBox}>
+          <Text testID="claim-link-error" style={[styles.message, { color: theme.danger }]}>
+            Something went wrong opening this bill. Try again.
+          </Text>
+        </View>
       </View>
     );
   }
@@ -177,26 +183,28 @@ export default function ClaimLinkScreen() {
   if (phase === 'name-prompt') {
     return (
       <View style={[styles.centered, { backgroundColor: theme.background }]}>
-        <Text style={[styles.title, { color: theme.text }]}>What&apos;s your name?</Text>
-        <Text style={{ color: theme.textMuted, textAlign: 'center', marginBottom: 16 }}>
-          So everyone on this bill knows who claimed what.
-        </Text>
-        <TextInput
-          testID="join-name-input"
-          value={name}
-          onChangeText={setName}
-          placeholder="Name"
-          placeholderTextColor={theme.textMuted}
-          accessibilityLabel="Your name"
-          maxLength={30}
-          style={[styles.nameInput, { color: theme.text, borderColor: theme.border }]}
-        />
-        {joinError && (
-          <Text testID="join-error" style={{ color: theme.danger, marginBottom: 8 }}>
-            {joinError}
+        <View style={styles.centeredBox}>
+          <Text style={[styles.centeredTitle, { color: theme.text }]}>What&apos;s your name?</Text>
+          <Text style={[styles.message, { color: theme.textMuted, marginBottom: 16 }]}>
+            So everyone on this bill knows who claimed what.
           </Text>
-        )}
-        <PrimaryButton testID="join-button" label="Join bill" onPress={() => attemptJoin(name)} />
+          <TextInput
+            testID="join-name-input"
+            value={name}
+            onChangeText={setName}
+            placeholder="Name"
+            placeholderTextColor={theme.textMuted}
+            accessibilityLabel="Your name"
+            maxLength={30}
+            style={[styles.nameInput, { color: theme.text, borderColor: theme.border }]}
+          />
+          {joinError && (
+            <Text testID="join-error" style={{ color: theme.danger, marginBottom: 8 }}>
+              {joinError}
+            </Text>
+          )}
+          <PrimaryButton testID="join-button" label="Join bill" onPress={() => attemptJoin(name)} />
+        </View>
       </View>
     );
   }
@@ -355,13 +363,19 @@ function BreakdownLine({ label, cents, currency, color }: { label: string; cents
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 8 },
+  // A plain View with a fixed width, not a bare Text/TextInput centered by a shrink-to-fit flex
+  // parent: RN Web sizes an unconstrained Text to its own (unwrapped) content width before
+  // wrapping, which both overflows a narrow screen and defeats centering (it centers the
+  // oversized box, not the wrapped text within it).
+  centeredBox: { width: 320, maxWidth: '100%', alignItems: 'center' },
   content: { padding: 20, paddingTop: 60, paddingBottom: 140 },
   title: { fontSize: 24, fontWeight: '800', marginBottom: 4 },
-  message: { fontSize: 16, textAlign: 'center' },
+  centeredTitle: { fontSize: 24, fontWeight: '800', marginBottom: 4, textAlign: 'center', width: '100%' },
+  message: { fontSize: 16, textAlign: 'center', width: '100%' },
   sectionTitle: { fontSize: 18, fontWeight: '700', marginTop: 12, marginBottom: 8 },
   itemRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 10 },
   itemInfo: { flex: 1 },
-  nameInput: { width: '100%', maxWidth: 320, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12, textAlign: 'center' },
+  nameInput: { width: '100%', borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12, textAlign: 'center' },
   totalsCard: { borderTopWidth: 1, padding: 16, gap: 8 },
   totalsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   breakdown: { gap: 4, paddingTop: 4 },
