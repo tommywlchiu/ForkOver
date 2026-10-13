@@ -34,6 +34,18 @@ export function createNotifyPorts(supabase: SupabaseClient): NotifyDeps {
         const text = await res.text().catch(() => '');
         throw new Error(`Expo push API responded ${res.status}: ${text}`);
       }
+
+      // Expo validates per-message, not per-request: a stale or malformed token still comes
+      // back with an overall 200 and an individual {"status":"error",...} ticket, so `res.ok`
+      // alone would silently swallow it. Log each one (handler.ts's caller still never throws
+      // for this - SPEC's "log and move on", not a retry or a crashed webhook); pruning the
+      // token itself from push_tokens is the separate, not-yet-built gap the task brief calls out.
+      const body = (await res.json().catch(() => null)) as { data?: Array<{ status: string; message?: string }> } | null;
+      body?.data?.forEach((ticket, i) => {
+        if (ticket.status === 'error') {
+          console.error(`notify: Expo rejected push to ${messages[i]?.to}: ${ticket.message}`);
+        }
+      });
     },
   };
 }
