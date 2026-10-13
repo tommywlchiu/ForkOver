@@ -97,6 +97,22 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   8.1/8.7). It no-ops (web, simulators/emulators) and never throws; it also no-ops until an EAS
   project exists (no `projectId` configured yet in `app.json`/`eas.json`), which `notify` (a later
   M4 task) needs to actually send anything.
+- `src/app/b/[token].tsx` (SPEC 4, native and web) is the public bill link: it never reads a bill
+  by id, only by `share_token` (`bill.shareToken` on `StoredBill`, not `bill.id` - `share.tsx`'s
+  link uses it too). Resolving a token has two paths in `supabaseBillStore.ts`: an already-member
+  (including on a *closed* bill, SPEC 8.5) reads straight through `fetchBillByShareTokenIfMember`
+  (plain RLS-gated select); everyone else goes through `joinBillByToken` (`join_bill`, SPEC 8.2),
+  which unconditionally rejects a closed bill even for an idempotent rejoin, so it's only ever
+  called once the first path has already come back empty. Claiming always acts for the resolved
+  "self" person id; there is no person-switcher like the payer's bill screen (that's M5). A bill
+  loaded this way (not through `promoteBill`) needs `BillStore.replaceBill` to also mark it
+  promoted, or every claim write silently stays local-only - `loadBill` on `src/state/bill.ts` is
+  the one call that does both the load and that marking.
+- RN Web sizes an unconstrained `<Text>` to its own unwrapped content width before it will wrap,
+  so centering it with only a shrink-to-fit flex parent (`alignItems: 'center'`) overflows a
+  narrow screen instead of wrapping - give it (or a wrapping `View`) a real `width`, not just
+  `textAlign: 'center'`. Also, RN Web's `Pressable` renders as `<button>`, not `<div role="button">`
+  - a screenshot-driving script that queries by tag will silently find nothing.
 
 ## Working rules
 

@@ -41,6 +41,14 @@ export type BillState = {
   subscribeToBill: (billId: string) => () => void;
   /** Refetches the full bill snapshot from Supabase (SPEC 8.3's reconnect behavior). */
   refetchBill: (billId: string) => Promise<void>;
+  /**
+   * Hydrates the store with a bill snapshot fetched some other way than the usual
+   * draft-bill-then-promote flow (SPEC.md section 4, `b/[token]`) - the public claim route's own
+   * `joinBillByToken`/`fetchBillByShareTokenIfMember` already return a full `StoredBill`, so this
+   * is the one call that makes `useResolvedBill` (and everything built on it: offline gating,
+   * realtime, the sync banners) work for that screen too, the same as every other bill screen.
+   */
+  loadBill: (bill: StoredBill) => void;
 
   addItem: (billId: string, item: { name: string; priceCents: number }) => void;
   updateItem: (billId: string, itemId: string, patch: Partial<{ name: string; priceCents: number }>) => void;
@@ -242,6 +250,11 @@ export const useBillStore = create<BillState>((set, get) => {
       refresh(billId);
     },
 
+    loadBill: (bill) => {
+      dataStore.replaceBill(bill); // same one-way flow as subscribeToBill/refetchBill above
+      refresh(bill.id);
+    },
+
     invitePerson: async (billId, userId) => {
       return inviteBillMember(billId, userId);
     },
@@ -298,16 +311,27 @@ export const useBillStore = create<BillState>((set, get) => {
       const bill = get().bills[billId];
       if (!bill) return;
       const existing = bill.claims.find((c) => c.itemId === itemId && c.personId === personId);
+      // `created_by` is the person claiming for themselves here - both current callers (the payer
+      // tapping their own bill screen, and `b/[token].tsx`'s guest/member tapping "Mine" for
+      // themselves) always have `personId` acting for its own `bill_people` row. Hardcoding
+      // `bill.payerId` here used to be a no-op for the payer's own taps (the only caller before
+      // this screen existed) but silently broke every non-payer claim: `guard_claim_change` (the
+      // DB trigger, SPEC 8.2) requires `created_by`'s `user_id` to match the caller's `auth.uid()`
+      // or the caller to be the payer - a guest/member is neither, so the write was rejected
+      // outright. "Claim for anyone" (FR-32, the payer claiming on another person's behalf) is
+      // M5 and isn't built yet; it will need its own explicit path that passes the payer's id on
+      // purpose, not this implicit default.
       if (existing?.mode === 'mine') dataStore.clearClaim(billId, itemId, personId);
-      else dataStore.setClaim(billId, itemId, personId, 'mine', bill.payerId);
+      else dataStore.setClaim(billId, itemId, personId, 'mine', personId);
       refresh(billId);
     },
     toggleShared: (billId, itemId, personId) => {
       const bill = get().bills[billId];
       if (!bill) return;
       const existing = bill.claims.find((c) => c.itemId === itemId && c.personId === personId);
+      // See toggleMine's comment just above - same fix, same reason.
       if (existing?.mode === 'shared') dataStore.clearClaim(billId, itemId, personId);
-      else dataStore.setClaim(billId, itemId, personId, 'shared', bill.payerId);
+      else dataStore.setClaim(billId, itemId, personId, 'shared', personId);
       refresh(billId);
     },
 

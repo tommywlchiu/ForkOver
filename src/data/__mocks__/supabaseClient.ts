@@ -37,7 +37,7 @@ type Profile = {
 type FakeSession = {
   access_token: string;
   refresh_token: string;
-  user: { id: string; user_metadata: { full_name: string } };
+  user: { id: string; user_metadata: { full_name: string }; is_anonymous?: boolean };
 };
 
 let currentSession: FakeSession | null = null;
@@ -60,6 +60,15 @@ const billTables: Record<BillTable, Map<string, Row>> = {
   assignments: new Map(),
   payments: new Map(),
 };
+
+/** Mirrors `is_bill_member` (SPEC 8.2) for the one select this mock gates - see the `bills`
+ *  branch in `FakeQuery.run()`'s `select` case. */
+function isBillMember(billId: string, userId: string | undefined): boolean {
+  if (!userId) return false;
+  const bill = billTables.bills.get(billId);
+  if (bill?.payer_user_id === userId) return true;
+  return [...billTables.bill_people.values()].some((row) => row.bill_id === billId && row.user_id === userId);
+}
 
 /** `claims` has no single-column id (its primary key is (item_id, person_id)); everything else does. */
 function keyFor(table: BillTable, row: Row): string {
@@ -104,7 +113,15 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: { message: string
     const matches = () => [...rows.values()].filter((row) => this.filters.every((f) => f(row)));
 
     if (this.op === 'select') {
-      const found = matches();
+      let found = matches();
+      // The one bit of real RLS this generic, policy-blind stand-in simulates (see the module
+      // doc): `bills_select_members` (SPEC 8.2 "Membership") - without it, the public claim
+      // route's "is this caller already a member?" probe (`fetchBillByShareTokenIfMember`) would
+      // find a bill by its `share_token` for literally anyone, including a guest who hasn't
+      // joined yet, and the route would never reach `join_bill` at all.
+      if (this.table === 'bills') {
+        found = found.filter((row) => isBillMember(row.id as string, currentSession?.user.id));
+      }
       if (this.wantsSingle || this.wantsMaybeSingle) {
         if (found.length === 0) {
           return this.wantsSingle ? { data: null, error: { message: 'no rows found' } } : { data: null, error: null };
@@ -221,6 +238,20 @@ export const supabase = {
       notify('SIGNED_OUT', null);
       return { error: null };
     },
+    // A guest opening a `b/[token]` link with no session at all (session.ts's `ensureSession`,
+    // SPEC 3 "anonymous sessions for guests"). Same shape as `setSession` above: a fresh fake
+    // user/profile per call, `is_anonymous: true` so callers can tell a guest from a real sign-in.
+    signInAnonymously: async () => {
+      const userId = `mock-anon-user-${++userCounter}`;
+      profiles.set(userId, { username: null, display_name: null, venmo_username: null, ai_consent_at: null });
+      currentSession = {
+        access_token: userId,
+        refresh_token: `mock-refresh-${userId}`,
+        user: { id: userId, user_metadata: { full_name: 'Guest' }, is_anonymous: true },
+      };
+      notify('SIGNED_IN', currentSession);
+      return { data: { session: currentSession, user: currentSession.user }, error: null };
+    },
   },
   from: (table: string) => {
     if (isBillTable(table)) {
@@ -283,6 +314,7 @@ export const supabase = {
         tip: null,
         sent_at: null,
         created_at: new Date().toISOString(),
+        share_token: `mock-share-token-${crypto.randomUUID()}`,
       };
       billTables.bills.set(bill.id as string, bill);
       const payerPerson: Row = {
@@ -294,6 +326,48 @@ export const supabase = {
       };
       billTables.bill_people.set(payerPerson.id as string, payerPerson);
       return { data: bill, error: null };
+    }
+
+    if (fn === 'join_bill') {
+      // `code` mirrors the real `join_bill`'s distinct SQLSTATE per case (supabase/migrations/
+      // 20261012000000_join_bill_error_codes.sql) - `joinBillByToken` classifies by this, not by
+      // the message text, so the mock has to carry it too for that path to be exercised at all
+      // under jest (real RLS/errcodes only ever run against local Postgres otherwise).
+      if (!currentSession) return { data: null, error: { message: 'join_bill requires a session (signed in or anonymous)', code: 'FO001' } };
+      const shareToken = String(args.p_share_token ?? '');
+      const name = String(args.p_display_name ?? '').trim();
+      const bill = [...billTables.bills.values()].find((row) => row.share_token === shareToken);
+      if (!bill) return { data: null, error: { message: 'no bill found for that share link', code: 'FO002' } };
+      if (bill.status === 'closed') return { data: null, error: { message: 'this bill is closed', code: 'FO003' } };
+      if (name.length < 1 || name.length > 30) {
+        return { data: null, error: { message: 'display_name must be 1 to 30 characters', code: 'FO004' } };
+      }
+      const existing = [...billTables.bill_people.values()].find(
+        (row) => row.bill_id === bill.id && row.user_id === currentSession!.user.id,
+      );
+      if (existing) return { data: existing, error: null };
+      const person: Row = {
+        id: crypto.randomUUID(),
+        bill_id: bill.id,
+        user_id: currentSession.user.id,
+        display_name: name,
+        kind: currentSession.user.is_anonymous ? 'guest' : 'member',
+      };
+      billTables.bill_people.set(person.id as string, person);
+      return { data: person, error: null };
+    }
+
+    if (fn === 'get_bill_payer_venmo') {
+      const billId = args.p_bill_id as string;
+      // Mirrors the real RPC's `is_bill_member` gate (supabase/migrations/20261011010000_
+      // bill_payer_venmo.sql) - without this, a regression dropping that check server-side would
+      // only ever be caught by the separate pgTAP suite, not `npm test` (the `bills` select
+      // branch above was deliberately built to simulate this exact membership boundary already).
+      if (!isBillMember(billId, currentSession?.user.id)) return { data: null, error: null };
+      const bill = billTables.bills.get(billId);
+      if (!bill) return { data: null, error: null };
+      const payer = profiles.get(bill.payer_user_id as string);
+      return { data: payer?.venmo_username ?? null, error: null };
     }
 
     // `invite_bill_member` (supabase/migrations/20261011010000_invite_bill_member.sql): mirrors

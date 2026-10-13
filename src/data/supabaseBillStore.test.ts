@@ -6,7 +6,7 @@
  * unpromoted one stays local-only, same as `createLocalBillStore` always did.
  */
 import { supabase } from './supabaseClient';
-import { createDebouncedLatestFetcher, createSupabaseBillStore, inviteBillMember } from './supabaseBillStore';
+import { createDebouncedLatestFetcher, createSupabaseBillStore, fetchBillByShareTokenIfMember, inviteBillMember } from './supabaseBillStore';
 
 jest.mock('./supabaseClient');
 const { __resetFakeSupabase, __seedProfile } = jest.requireMock('./supabaseClient') as {
@@ -427,6 +427,37 @@ describe('createSupabaseBillStore', () => {
     // The merge reverted to its two original items; the concurrent, unrelated addItem survived.
     expect(current.items.map((i) => i.name).sort()).toEqual(['Beer', 'Beer', 'Soda']);
     expect(current.items.some((i) => i.id === unrelated.id)).toBe(true);
+  });
+});
+
+// Code review on PR #34: a transient read failure used to look identical to "not a member" (both
+// collapsed to `null`), so the public claim link's caller would fall through to `join_bill`,
+// which rejects a closed bill unconditionally - telling an actual member of a closed bill who hit
+// a network blip "this bill is closed and you were never on it" instead of a retryable error.
+describe('fetchBillByShareTokenIfMember', () => {
+  it('returns not_member, not error, for a token with no RLS-visible row', async () => {
+    await signIn();
+    const result = await fetchBillByShareTokenIfMember('does-not-exist');
+    expect(result).toEqual({ kind: 'not_member' });
+  });
+
+  it('returns error, not not_member, when the read itself fails', async () => {
+    await signIn();
+    const fromSpy = jest.spyOn(supabase, 'from').mockImplementationOnce(
+      () =>
+        ({
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: { message: 'network blip' } }),
+            }),
+          }),
+        }) as unknown as ReturnType<typeof supabase.from>,
+    );
+
+    const result = await fetchBillByShareTokenIfMember('whatever-token');
+
+    expect(result).toEqual({ kind: 'error' });
+    fromSpy.mockRestore();
   });
 });
 
