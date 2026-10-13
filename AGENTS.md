@@ -107,7 +107,17 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   registry (`src/lib/notify/registry.ts`), `handler.ts`, and the webhook itself don't change. The
   webhook's target URL (`supabase/migrations/20261013000200_notify_webhook.sql`) is
   `host.docker.internal`, local-stack-only; redeploying to a real project needs that trigger
-  recreated against the project's own function URL.
+  recreated against the project's own function URL. It has `verify_jwt = false` (there's no
+  signed-in user's JWT on a webhook call), so it checks its own shared secret instead
+  (`NOTIFY_WEBHOOK_SECRET`, sent as the `x-notify-secret` header by the webhook trigger) before
+  touching the request - without that, its URL would be as reachable as any other function's and
+  anyone could push an arbitrary notification to any known user id. Local testing needs
+  `NOTIFY_WEBHOOK_SECRET` in `supabase/functions/.env.local` matching the literal value baked into
+  the webhook migration, and only works through `npx supabase functions serve --env-file
+  supabase/functions/.env.local` - the plain embedded runtime `supabase start` serves functions
+  with doesn't load that file at all (confirmed by inspecting the container's own env; only
+  `SUPABASE_*` platform vars are present), so a function needing a custom secret silently gets
+  `WORKER_ERROR` under plain `start` regardless of what `.env.local` says.
 - `src/app/b/[token].tsx` (SPEC 4, native and web) is the public bill link: it never reads a bill
   by id, only by `share_token` (`bill.shareToken` on `StoredBill`, not `bill.id` - `share.tsx`'s
   link uses it too). Resolving a token has two paths in `supabaseBillStore.ts`: an already-member
