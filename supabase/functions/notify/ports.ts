@@ -8,7 +8,8 @@
  * testable decisions (which tokens get a message, what it says) live in src/lib/notify/handler.ts.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { ExpoPushMessage, NotifyDeps } from '../../../src/lib/notify/handler.ts';
+import type { NotifyDeps } from '../../../src/lib/notify/handler.ts';
+import type { ExpoPushMessage } from '../../../src/lib/notify/types.ts';
 
 const EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send';
 
