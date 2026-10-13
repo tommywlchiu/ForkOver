@@ -1,0 +1,52 @@
+/**
+ * The data-layer half of `notify`'s dependencies (SPEC 8.7): reading `push_tokens` and sending to
+ * the Expo Push API, over the already-created service-role Supabase client from index.ts. No
+ * Expo API key is required (https://docs.expo.dev/push-notifications/sending-notifications/).
+ *
+ * Untested under jest, same as parse-receipt/ports.ts: both are Deno-imported, and the real work
+ * here (a live DB round trip, a real HTTP call to Expo) isn't something jest can exercise - the
+ * testable decisions (which tokens get a message, what it says) live in src/lib/notify/handler.ts.
+ */
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { NotifyDeps } from '../../../src/lib/notify/handler.ts';
+import type { ExpoPushMessage } from '../../../src/lib/notify/types.ts';
+
+const EXPO_PUSH_API_URL = 'https://exp.host/--/api/v2/push/send';
+
+export function createNotifyPorts(supabase: SupabaseClient): NotifyDeps {
+  return {
+    fetchPushTokens: async (userId) => {
+      const { data, error } = await supabase.from('push_tokens').select('token').eq('user_id', userId);
+      if (error) throw error;
+      return (data ?? []).map((row) => row.token as string);
+    },
+
+    sendExpoPush: async (messages: ExpoPushMessage[]) => {
+      const res = await fetch(EXPO_PUSH_API_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json',
+          'accept-encoding': 'gzip, deflate',
+        },
+        body: JSON.stringify(messages),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Expo push API responded ${res.status}: ${text}`);
+      }
+
+      // Expo validates per-message, not per-request: a stale or malformed token still comes
+      // back with an overall 200 and an individual {"status":"error",...} ticket, so `res.ok`
+      // alone would silently swallow it. Log each one (handler.ts's caller still never throws
+      // for this - SPEC's "log and move on", not a retry or a crashed webhook); pruning the
+      // token itself from push_tokens is the separate, not-yet-built gap the task brief calls out.
+      const body = (await res.json().catch(() => null)) as { data?: Array<{ status: string; message?: string }> } | null;
+      body?.data?.forEach((ticket, i) => {
+        if (ticket.status === 'error') {
+          console.error(`notify: Expo rejected push to ${messages[i]?.to}: ${ticket.message}`);
+        }
+      });
+    },
+  };
+}

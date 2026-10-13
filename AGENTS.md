@@ -95,8 +95,29 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
 - `src/data/pushTokens.ts`'s `registerForPushNotifications` runs once per sign-in from
   `src/app/(app)/_layout.tsx` and upserts the device's Expo push token into `push_tokens` (SPEC
   8.1/8.7). It no-ops (web, simulators/emulators) and never throws; it also no-ops until an EAS
-  project exists (no `projectId` configured yet in `app.json`/`eas.json`), which `notify` (a later
-  M4 task) needs to actually send anything.
+  project exists (no `projectId` configured yet in `app.json`/`eas.json`), which it needs to
+  mint a real token for `notify` to send to.
+- The `notify` Edge Function (`supabase/functions/notify/`, SPEC 8.7) only wires up the first of
+  the three triggers: a member's push when the payer invites them (`invite_bill_member`, M4). The
+  conflict and last-unclaimed-item triggers are M5 - there's no conflict/assignment data model yet
+  to fire them from. It runs from a `notification_events` outbox table and its own database
+  webhook (`supabase/migrations/202610130002*`), not a client call, so sending can't be skipped;
+  add a later trigger as a new `event_type`, a new file under `src/lib/notify/events/`, and one
+  more insert into `notification_events` from whatever RPC/trigger creates that event - the
+  registry (`src/lib/notify/registry.ts`), `handler.ts`, and the webhook itself don't change. The
+  webhook's target URL (`supabase/migrations/20261013000200_notify_webhook.sql`) is
+  `host.docker.internal`, local-stack-only; redeploying to a real project needs that trigger
+  recreated against the project's own function URL. It has `verify_jwt = false` (there's no
+  signed-in user's JWT on a webhook call), so it checks its own shared secret instead
+  (`NOTIFY_WEBHOOK_SECRET`, sent as the `x-notify-secret` header by the webhook trigger) before
+  touching the request - without that, its URL would be as reachable as any other function's and
+  anyone could push an arbitrary notification to any known user id. Local testing needs
+  `NOTIFY_WEBHOOK_SECRET` in `supabase/functions/.env.local` matching the literal value baked into
+  the webhook migration, and only works through `npx supabase functions serve --env-file
+  supabase/functions/.env.local` - the plain embedded runtime `supabase start` serves functions
+  with doesn't load that file at all (confirmed by inspecting the container's own env; only
+  `SUPABASE_*` platform vars are present), so a function needing a custom secret silently gets
+  `WORKER_ERROR` under plain `start` regardless of what `.env.local` says.
 - `src/app/b/[token].tsx` (SPEC 4, native and web) is the public bill link: it never reads a bill
   by id, only by `share_token` (`bill.shareToken` on `StoredBill`, not `bill.id` - `share.tsx`'s
   link uses it too). Resolving a token has two paths in `supabaseBillStore.ts`: an already-member
@@ -157,7 +178,7 @@ npm run measure:scan-latency # median shutter-to-sent over N stand-in runs (SPEC
 ## Edge Functions
 
 - `supabase/functions/*/index.ts` is thin Deno wiring. The logic lives in `src/lib` so jest tests it; `tsc` and eslint skip `supabase/functions`.
-- Files that Deno imports (`src/lib/receipt/{schema,partialJson,prompt,anthropic,parseReceipt,rowCheck,handler}.ts` and `src/lib/money/currency.ts`) import each other with explicit `.ts` extensions and no dependencies. Keep it that way.
+- Files that Deno imports (`src/lib/receipt/{schema,partialJson,prompt,anthropic,parseReceipt,rowCheck,handler}.ts`, `src/lib/money/currency.ts`, and `src/lib/notify/{types,handler,registry,events/billMemberInvited}.ts`) import each other with explicit `.ts` extensions and no dependencies. Keep it that way.
 - `supabase start` and `supabase functions serve` need Docker (WSL integration enabled). The CLI is a dev dependency: `npx supabase ...`.
 - Secrets live in `supabase/functions/.env.local` (git-ignored, template in `.env.example`), never in client code.
 - `parse-receipt/ports.ts` exports `createDataPorts(supabase)`, a factory over the one service-role
