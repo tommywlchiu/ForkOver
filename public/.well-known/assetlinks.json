@@ -1,0 +1,13 @@
+[
+  {
+    "_fixture": "NOT A REAL ASSET LINKS FILE. package_name and sha256_cert_fingerprints below are placeholders, not real values. Replace once an EAS project exists and the signing certificate(s) (debug and release) are known, then delete this _fixture key. See public/.well-known/README.md.",
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "PLACEHOLDER_PACKAGE_NAME_NOT_REAL",
+      "sha256_cert_fingerprints": [
+        "PLACEHOLDER:SHA256:FINGERPRINT:NOT:REAL:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
+      ]
+    }
+  }
+]

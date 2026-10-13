@@ -92,6 +92,17 @@ writing app code. Routes live under `src/app/`, not a top-level `app/`.
   receipt" worked example (payer a, b owes 3599, c owes 2253); claiming it the same way through the
   Bill screen reproduces those exact totals, which is what `src/integration/paymentFlow.test.tsx`
   and `scripts/measure-scan-latency.ts` both rely on.
+- `public/.well-known/` (SPEC line 132) holds fixture `apple-app-site-association` and
+  `assetlinks.json` files proving the serving mechanism only - every identifier inside
+  them is a placeholder, see `public/.well-known/README.md` for exactly what's missing
+  (web origin domain, Apple Team ID + `ios.bundleIdentifier`, EAS project + Android
+  `package` + signing cert SHA256 fingerprints) and why real values can't be filled in
+  yet. Expo Router's static web export passes `public/` through verbatim to `dist/`
+  (confirmed with `npx expo export -p web`), and it's reachable with no redirect over
+  plain HTTPS once served - but `apple-app-site-association` has no file extension, so
+  extension-based static servers (`npx expo serve`, most others) serve it as
+  `application/octet-stream` instead of the `application/json` Apple requires; whatever
+  hosts the production web origin needs an explicit header override for that one path.
 - `src/data/pushTokens.ts`'s `registerForPushNotifications` runs once per sign-in from
   `src/app/(app)/_layout.tsx` and upserts the device's Expo push token into `push_tokens` (SPEC
   8.1/8.7). It no-ops (web, simulators/emulators) and never throws; it also no-ops until an EAS

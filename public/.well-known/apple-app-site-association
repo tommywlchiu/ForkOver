@@ -1,0 +1,19 @@
+{
+  "_fixture": "NOT A REAL ASSOCIATION FILE. appID below is a placeholder, not a real Apple Team ID + bundle identifier. Replace both halves of appIDs once the Apple Developer account and app.json ios.bundleIdentifier exist, then delete this _fixture key. See public/.well-known/README.md.",
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": [
+          "PLACEHOLDER_TEAM_ID.PLACEHOLDER.NOT.REAL.bundle.id"
+        ],
+        "components": [
+          {
+            "/": "/b/*",
+            "comment": "Public bill link (SPEC 2.3 step 1, SPEC line 132)"
+          }
+        ]
+      }
+    ]
+  }
+}
