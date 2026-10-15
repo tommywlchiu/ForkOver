@@ -36,6 +36,19 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "02303ecc-3180-4f79-b1af-2a275974c7d8"
+      }
+    },
+    "owner": "tommywlchius-team",
+    "ios": {
+      "bundleIdentifier": "com.tommywlchiusteam.forkover",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     }
   }
 }
