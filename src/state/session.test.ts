@@ -1,7 +1,7 @@
 /**
  * Unit coverage for the parts of the real session store (SPEC.md section 11, M3 part 1) that
- * the screen-level integration tests don't exercise directly: the taken-username error path and
- * `recordAiConsent`'s optimistic update plus revert-on-failure.
+ * the screen-level integration tests don't exercise directly: the taken-username error path,
+ * `recordAiConsent`'s optimistic update plus revert-on-failure, and `signIn`'s Linking fallback.
  */
 import { supabase } from '../data/supabaseClient';
 import { ensureSession, fetchOwnDisplayName, useSessionStore } from './session';
@@ -18,6 +18,18 @@ jest.mock('expo-web-browser', () => ({
     url: 'forkover://auth-callback#access_token=mock-access-test&refresh_token=mock-refresh-test&token_type=bearer',
   })),
 }));
+// A tiny stand-in for `expo-linking`'s 'url' events: tests fire `emitLinkingUrl` to simulate the
+// OS delivering a deep link, and `mockLinkingListeners` shows whether `signIn` cleaned up.
+const mockLinkingListeners = new Set<(event: { url: string }) => void>();
+jest.mock('expo-linking', () => ({
+  addEventListener: jest.fn((_type: 'url', listener: (event: { url: string }) => void) => {
+    mockLinkingListeners.add(listener);
+    return { remove: () => mockLinkingListeners.delete(listener) };
+  }),
+}));
+function emitLinkingUrl(url: string) {
+  for (const listener of [...mockLinkingListeners]) listener({ url });
+}
 
 // Test-only reset hook the mock exports but the real module doesn't; accessed dynamically so
 // tsc doesn't check it against the real module's type.
@@ -63,6 +75,84 @@ describe('session store', () => {
     expect(useSessionStore.getState().aiConsentAt).toBeNull();
     await useSessionStore.getState().recordAiConsent();
     expect(useSessionStore.getState().aiConsentAt).not.toBeNull();
+  });
+});
+
+// `ASWebAuthenticationSession` can report `cancel` while the real redirect still reaches the app
+// as a deep link a moment later, so `signIn` also waits briefly for a `Linking` 'url' event.
+describe('signIn Linking fallback', () => {
+  const openAuthSessionAsync = jest.requireMock('expo-web-browser').openAuthSessionAsync as jest.Mock;
+  const AUTH_REDIRECT =
+    'forkover://auth-callback#access_token=mock-access-late&refresh_token=mock-refresh-late&token_type=bearer';
+
+  beforeEach(async () => {
+    __resetFakeSupabase();
+    await useSessionStore.getState().signOut();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('signs in from a Linking redirect that arrives after the session reports cancel', async () => {
+    openAuthSessionAsync.mockImplementationOnce(async () => {
+      setTimeout(() => emitLinkingUrl(AUTH_REDIRECT), 500);
+      return { type: 'cancel' };
+    });
+
+    const signIn = useSessionStore.getState().signIn('google');
+    await jest.advanceTimersByTimeAsync(500);
+    await signIn;
+
+    expect(useSessionStore.getState().isSignedIn).toBe(true);
+    expect(mockLinkingListeners.size).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('throws "Sign-in was canceled." when no redirect arrives within the grace window', async () => {
+    openAuthSessionAsync.mockImplementationOnce(async () => ({ type: 'cancel' }));
+
+    const signIn = useSessionStore.getState().signIn('google');
+    const assertion = expect(signIn).rejects.toThrow('Sign-in was canceled.');
+    await jest.advanceTimersByTimeAsync(2000);
+    await assertion;
+
+    expect(useSessionStore.getState().isSignedIn).toBe(false);
+    expect(mockLinkingListeners.size).toBe(0);
+  });
+
+  it('ignores an unrelated deep link (like a bill link) during the grace window', async () => {
+    openAuthSessionAsync.mockImplementationOnce(async () => {
+      setTimeout(() => emitLinkingUrl('forkover://b/some-share-token'), 100);
+      setTimeout(() => emitLinkingUrl('forkover://auth-callback'), 200);
+      return { type: 'cancel' };
+    });
+
+    const signIn = useSessionStore.getState().signIn('google');
+    const assertion = expect(signIn).rejects.toThrow('Sign-in was canceled.');
+    await jest.advanceTimersByTimeAsync(2000);
+    await assertion;
+
+    expect(useSessionStore.getState().isSignedIn).toBe(false);
+    expect(mockLinkingListeners.size).toBe(0);
+  });
+
+  it('still signs in on a successful session result and removes the Linking listener', async () => {
+    await useSessionStore.getState().signIn('google');
+
+    expect(useSessionStore.getState().isSignedIn).toBe(true);
+    expect(mockLinkingListeners.size).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('removes the Linking listener when the auth session throws', async () => {
+    openAuthSessionAsync.mockImplementationOnce(async () => {
+      throw new Error('browser unavailable');
+    });
+
+    await expect(useSessionStore.getState().signIn('google')).rejects.toThrow('browser unavailable');
+    expect(mockLinkingListeners.size).toBe(0);
   });
 });
 

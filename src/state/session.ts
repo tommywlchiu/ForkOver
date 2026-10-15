@@ -12,6 +12,7 @@
  */
 import { create } from 'zustand';
 import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import type { Session } from '@supabase/supabase-js';
@@ -72,6 +73,20 @@ async function fetchProfile(userId: string): Promise<ProfileRow | null> {
   return data;
 }
 
+/** How long `signIn` waits for the redirect deep link after the auth session reports no success. */
+const AUTH_REDIRECT_GRACE_MS = 2000;
+
+/**
+ * Whether a deep link is the OAuth redirect `signIn` is waiting for rather than some other link
+ * into the app. `makeRedirectUri()` can be just `forkover://`, which every app deep link starts
+ * with, so the URL must also carry the session tokens or an auth error.
+ */
+function isAuthRedirect(url: string, redirectTo: string): boolean {
+  if (!url.startsWith(redirectTo)) return false;
+  const { params, errorCode } = QueryParams.getQueryParams(url);
+  return !!errorCode || (!!params.access_token && !!params.refresh_token);
+}
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   ...SIGNED_OUT_FIELDS,
 
@@ -84,12 +99,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (error) throw error;
     if (!data?.url) throw new Error('Sign-in did not return a URL.');
 
-    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-    if (result.type !== 'success') {
-      throw new Error(result.type === 'cancel' ? 'Sign-in was canceled.' : 'Sign-in failed.');
+    // `ASWebAuthenticationSession` can report `cancel` even though the OS still delivers the real
+    // redirect to the app as a deep link a moment later (seen on the dev client). So also listen
+    // for that `Linking` 'url' event, and when the session result isn't `success`, wait a short
+    // grace window for it before giving up. Only the auth redirect itself counts: an unrelated deep
+    // link (e.g. a `/b/<token>` bill link) arriving in that window is ignored.
+    let resolveFallback: (url: string) => void = () => {};
+    const fallbackUrl = new Promise<string>((resolve) => {
+      resolveFallback = resolve;
+    });
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      if (isAuthRedirect(url, redirectTo)) resolveFallback(url);
+    });
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    let finalUrl: string | null;
+    try {
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      finalUrl =
+        result.type === 'success'
+          ? result.url
+          : await Promise.race([
+              fallbackUrl,
+              new Promise<null>((resolve) => {
+                graceTimer = setTimeout(() => resolve(null), AUTH_REDIRECT_GRACE_MS);
+              }),
+            ]);
+      if (!finalUrl) {
+        throw new Error(result.type === 'cancel' ? 'Sign-in was canceled.' : 'Sign-in failed.');
+      }
+    } finally {
+      subscription.remove();
+      if (graceTimer !== undefined) clearTimeout(graceTimer);
     }
 
-    const { params, errorCode } = QueryParams.getQueryParams(result.url);
+    const { params, errorCode } = QueryParams.getQueryParams(finalUrl);
     if (errorCode) throw new Error(errorCode);
     const { access_token, refresh_token } = params;
     if (!access_token || !refresh_token) throw new Error('Sign-in did not return a session.');
